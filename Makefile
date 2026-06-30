@@ -1,9 +1,9 @@
-AFL_CC ?= afl-clang-fast
+AFL_CC ?= afl-clang-lto
 LIBFUZZER_CC ?= clang
 CFLAGS ?= -g
 ARES_FLAGS ?= -g3
 LIBFUZZER_FLAGS ?= $(ARES_FLAGS) -fsanitize=address -fsanitize=fuzzer
-AFL_FLAGS ?= $(ARES_FLAGS) -O2 -fsanitize=address
+AFL_FLAGS ?= $(ARES_FLAGS) -O2 -fsanitize=address,undefined
 
 EXEC_SRC = src/exec/core.c src/exec/emulate.c src/exec/callsan.c src/exec/dev.c src/exec/elf.c
 SRC = $(EXEC_SRC) src/exec/cli.c

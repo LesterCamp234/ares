@@ -392,6 +392,8 @@ bool str_eq_case(const char *txt, size_t len, const char *c) {
 
 bool str_eq_2(const char *s1, size_t s1len, const char *s2, size_t s2len) {
     if (s1len != s2len) return false;
+    // both 0. i need this to avoid memcmp(NULL, NULL, 0) UB
+    if (s1len == 0) return true;
     return memcmp(s1, s2, s1len) == 0;
 }
 
@@ -2277,7 +2279,10 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                 skip_trailing(p);
                 const char *ident;
                 size_t ident_len;
-                parse_ident(p, &ident, &ident_len);
+                if (!parse_ident(p, &ident, &ident_len) || ident_len == 0) {
+                    err = "Expected identifier after .globl";
+                    break;
+                }
                 *ARES_ARRAY_PUSH(&g_globals) =
                     (Global){.str = ident, .len = ident_len};
                 continue;
@@ -2383,7 +2388,7 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
         // no-param instructions, like ret and nop
         skip_trailing(p);
 
-        if (consume_if(p, ':')) {
+        if (ident_len > 0 && consume_if(p, ':')) {
             for (size_t i = 0; i < ARES_ARRAY_LEN(&g_labels); i++) {
                 if (str_eq_2(ARES_ARRAY_GET(&g_labels, i)->txt,
                              ARES_ARRAY_GET(&g_labels, i)->len, ident,

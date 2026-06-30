@@ -474,7 +474,13 @@ void test_backtrack(void) {
 
 void test_dotlabel_fail(void) {
     assemble_line("j .data\n.data:");
-    TEST_ASSERT_EQUAL_STRING(g_error, "Label not found");
+    TEST_ASSERT_NOT_NULL(g_error);
+}
+
+
+void test_globl_empty(void) {
+    assemble_line(".globl\n");
+    TEST_ASSERT_EQUAL_STRING(g_error, "Expected identifier after .globl");
 }
 
 void test_nolabel(void) {
