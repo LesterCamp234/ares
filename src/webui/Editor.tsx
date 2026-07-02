@@ -7,11 +7,13 @@ import { EditorView, basicSetup } from "codemirror";
 import { Component, createEffect, createMemo, onCleanup, onMount } from "solid-js";
 import { createAsmLinter } from "./AssemblerErrors";
 import { breakpointGutter } from "./Breakpoint";
-import { Theme } from "./GithubTheme";
 import { lineHighlightEffect, lineHighlightState } from "./LineHighlight";
 import { riscvLanguage } from "./RiscVLanguage";
 import { headerDecoration } from "./TestSuite";
 import { ViewPlugin } from "@codemirror/view";
+import { tags as t } from "@lezer/highlight"
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language"
+import { Extension } from "@codemirror/state";
 
 // we cannot use naive setText for every keystroke, that would be too inefficient for larger files
 // so we need to return a getText getter from Editor
@@ -40,7 +42,6 @@ type EditorProps = {
     editorBlocked: boolean,
     highlightedLine?: number
     diagnostics?: { line: number, message: string },
-    theme: Theme,
     readonly editorInterfaceRef: EditorInterface,
     readonly storeText: (text: string) => void,
     readonly setBreakpoints: (lines: number[]) => void,
@@ -115,7 +116,7 @@ export const Editor: Component<EditorProps> = props => {
                 basicSetup,
                 theme,
                 EditorView.editorAttributes.of({ style: "font-size: 1.4em" }),
-                cmTheme.of(props.theme.cmTheme), // TODO: if i use constant CSS class names i dont need to let the rest of the code know the theme
+                cmTheme.of([cssTheme, highlightingExtension]),
                 [lineHighlightState],
                 indentUnit.of("    "),
                 keymap.of([...defaultKeymap, indentWithTab]),
@@ -142,10 +143,6 @@ export const Editor: Component<EditorProps> = props => {
             // force an immediate relint if the state changes to immediately catch
             // errors that happened while linter was off (ie during debugging)
             if (props.asmLinterOn) forceLinting(view);
-        });
-
-        createEffect(() => {
-            view.dispatch({ effects: cmTheme.reconfigure(props.theme.cmTheme) });
         });
 
         createEffect(() => {
@@ -231,3 +228,195 @@ const tabKeymap = keymap.of([{
         return false;
     }
 }]);
+
+const cssTheme = EditorView.theme({
+    "&": {
+        color: "var(--color-base5)",
+        backgroundColor: "var(--color-base0)"
+    },
+
+    ".cm-content": {
+        caretColor: "var(--color-blue)"
+    },
+    ".cm-debugging.cm-activeLine": {
+        backgroundColor: "var(--color-bgorange2)"
+    },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-blue)" },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": { backgroundColor: "var(--color-highlight-high)" },
+    ".cm-activeLine": { "background-color": "var(--color-highlight-low)" },
+    ".cm-content ::selection .cm-activeLine": { backgroundColor: "var(--color-base3)" },
+
+    ".cm-panels": { backgroundColor: "var(--color-base1)", color: "var(--color-base5)" },
+    ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--color-base2)" },
+    ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--color-base2)" },
+
+    ".cm-searchMatch": {
+        backgroundColor: "#72a1ff59",
+        outline: "1px solid #457dff"
+    },
+    ".cm-searchMatch.cm-searchMatch-selected": {
+        backgroundColor: "#6199ff2f"
+    },
+
+    ".cm-selectionMatch": { backgroundColor: "var(--color-bggreen)" + "90" },
+
+    "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
+        backgroundColor: "#bad0f847"
+    },
+
+    ".cm-gutters": {
+        backgroundColor: "var(--color-base0)",
+        color: "var(--color-base4)",
+        border: "none"
+    },
+
+    ".cm-activeLineGutter": {
+        backgroundColor: "var(--color-highlight-med)"
+    },
+
+    ".cm-foldPlaceholder": {
+        backgroundColor: "transparent",
+        border: "none",
+        color: "#ddd"
+    },
+    ".cm-textfield": {
+        backgroundColor: "var(--color-base1a)",
+        backgroundImage: "none",
+        border: "none",
+    },
+    ".cm-button": {
+        backgroundColor: "var(--color-base1a)",
+        backgroundImage: "none",
+        border: "none",
+    },
+
+    ".cm-search > label": {
+        "display": "flex",
+        "align-items": "center"
+    },
+    ".cm-search > br": {
+        "display": "none",
+    },
+    ".cm-panel.cm-search input[type=checkbox]": {
+        "-webkit-appearance": "none",
+        "-moz-appearance": "none",
+        "appearance": "none",
+        "width": "20px",
+        "margin": "5px",
+        "height": "20px",
+        "border": "none",
+        "background-color": "var(--color-base1a)",
+        "cursor": "pointer",
+    },
+
+    ".cm-panel.cm-search input[type=checkbox]:hover": {
+        "background-color": "var(--color-base3)",
+    },
+
+    ".cm-panel.cm-search input[type=checkbox]:checked": {
+        "background-color": "var(--color-base5)",
+    },
+
+    ".cm-panel.cm-search input[type=checkbox]:checked:hover": {
+        "background-color": "var(--color-base4)",
+    },
+
+    ".cm-search > button:hover": {
+        "background-color": "var(--color-base3)",
+        "background-image": "none",
+    },
+
+    ".cm-search > button:active": {
+        "background-color": "var(--color-base5)",
+        "color": "var(--color-base0)",
+        "background-image": "none",
+    },
+
+    ".cm-search > button:active:hover": {
+        "background-color": "var(--color-base4)",
+        "color": "var(--color-base0)",
+        "background-image": "none",
+    },
+
+    ".cm-tooltip": {
+        border: "none",
+        backgroundColor: "var(--color-base3)"
+    },
+    ".cm-tooltip .cm-tooltip-arrow:before": {
+        borderTopColor: "transparent",
+        borderBottomColor: "transparent"
+    },
+    ".cm-tooltip .cm-tooltip-arrow:after": {
+        borderTopColor: "var(--color-base3)",
+        borderBottomColor: "var(--color-base3)"
+    },
+});
+
+export const highlightStyle = HighlightStyle.define([
+    {
+        tag: t.keyword,
+        class: "text-purp"
+    },
+    {
+        tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName],
+        class: "text-red"
+    },
+    {
+        tag: [t.function(t.variableName), t.labelName],
+        class: "text-blue"
+    },
+    {
+        tag: [t.color, t.constant(t.name), t.standard(t.name)],
+        class: "text-orange"
+    },
+    {
+        tag: [t.definition(t.name), t.separator],
+        class: "text-base4"
+    },
+    {
+        tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace],
+        class: "text-orange"
+    },
+    {
+        tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp, t.link, t.special(t.string)],
+        class: "text-lightblue"
+    },
+    {
+        tag: [t.meta, t.comment],
+        class: "text-green0"
+    },
+    {
+        tag: t.strong,
+        class: "font-bold"
+    },
+    {
+        tag: t.emphasis,
+        class: "italic"
+    },
+    {
+        tag: t.strikethrough,
+        class: "line-through"
+    },
+    {
+        tag: t.link,
+        class: "underline"
+    },
+    {
+        tag: t.heading,
+        class: "text-base3 underline"
+    },
+    {
+        tag: [t.atom, t.bool, t.special(t.variableName)],
+        class: "text-orange"
+    },
+    {
+        tag: [t.processingInstruction, t.string, t.inserted],
+        class: "text-green"
+    },
+    {
+        tag: t.invalid,
+        class: "text-base5"
+    },
+]);
+
+const highlightingExtension: Extension = syntaxHighlighting(highlightStyle);

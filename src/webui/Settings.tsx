@@ -1,28 +1,15 @@
-import {Component, createEffect, createSignal, onCleanup, Show} from "solid-js";
-import {ThemeIcon} from "./EditorToolbar";
-import {darkTheme, lightTheme, setDarkTheme, setLightTheme} from "./Theme";
+import { Component, createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { darkTheme, lightTheme, setDarkTheme, setLightTheme, themeList } from "./Theme";
 
 
-export const Settings : Component<{ close: () => void }> = (props) => {
+export const Settings: Component<{ close: () => void }> = (props) => {
     let modalRef: HTMLDivElement | undefined;
     const [selection, setSelection] = createSignal(0);
 
-    function ModifyTheme(value: string, light: boolean) {
-        if (light) {
-            setLightTheme(value);
-            localStorage.setItem("lightTheme", value);
-        } else {
-            setDarkTheme(value);
-            localStorage.setItem("darkTheme", value);
-        }
-
-
-        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        if ((light && (ThemeIcon() == "sunny" || (ThemeIcon() == "night_sight_auto" && !prefersDark))) || (!light && (ThemeIcon() == "dark_mode" || (ThemeIcon() == "night_sight_auto" && prefersDark)))) {
-            document.documentElement.dataset.theme = value;
-        }
+    function modifyTheme(value: string, light: boolean) {
+        if (light) setLightTheme(value);
+        else setDarkTheme(value);
     }
-
 
     createEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -50,7 +37,7 @@ export const Settings : Component<{ close: () => void }> = (props) => {
             >
                 <header class="sticky top-0 z-10 flex items-center justify-between pl-4 theme-border border-b theme-bg">
                     <h2 id="modal-title" class="text-lg font-bold text-base4">
-                        Settings
+                        settings
                     </h2>
                     <button
                         onClick={props.close}
@@ -70,7 +57,7 @@ export const Settings : Component<{ close: () => void }> = (props) => {
                             class="theme-bg text-base4 cursor-pointer text-xl"
                             onClick={() => setSelection(0)}
                         >
-                            Settings
+                            theming
                         </button>
                         <button
                             type="button"
@@ -78,59 +65,61 @@ export const Settings : Component<{ close: () => void }> = (props) => {
                             class="theme-bg text-base4 cursor-pointer text-xl mt-4"
                             onClick={() => setSelection(1)}
                         >
-                            About
+                            about
                         </button>
-                    </div>
-                    <Show when={selection() == 0}>
-                        <div class="flex flex-col w-full gap-3 h-full border-l-[1px] theme-border justify-center">
-                            <div class="flex flex-row justify-between gap-1 mt-2 ml-[10%] mr-[10%]">
-                                <p class="text-base4 text-lg font-bold self-center">Light Theme</p>
-                                <select
-                                    class="text-base4 w-[30%] theme-bg border-2 theme-border p-2 focus:ring-blue-400 focus:border-blue-400 shadow-xs"
-                                    onChange={ e => ModifyTheme(e.target.value, true)}
-                                    value={lightTheme()}
-                                >
-                                    <option value="ayu-light">Ayu</option>
-                                    <option value="catpuccin-latte">Catpuccin Latte</option>
-                                    <option value="github-light">Default</option>
-                                    <option value="rose-pine-dawn">Rosé Pine Dawn</option>
-                                </select>
+                    </div><Show when={selection() == 0}>
+                        <div class="flex flex-col w-full gap-3 h-full justify-center">
+                            <div class="flex flex-row justify-between gap-1 mt-2 ml-[2%] mr-[2%]">
+                                <p class="text-base4 text-lg font-bold self-center">light theme</p>
+                                <div class="pb-0.5 relative inline-block w-48">
+                                    <select
+                                        class="appearance-none font-semibold w-full text-left pr-6 theme-fg theme-gutter theme-border focus:outline-none cursor-pointer bg-transparent"
+                                        onChange={e => modifyTheme(e.target.value, true)}
+                                        value={lightTheme()}
+                                    >
+                                        <For each={themeList.light}>
+                                            {theme => <option class="theme-gutter theme-fg" value={theme.name}>{theme.nameUser}</option>}
+                                        </For>
+                                    </select>
+                                    <svg class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 theme-fg"
+                                        xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-344 240-584l56-56 184 184 184-184 56 56-240 240Z" /></svg>
+                                </div>
                             </div>
-                            <div class="flex flex-row justify-between gap-1 mb-2 ml-[10%] mr-[10%]">
-                                <p class="text-base4 text-lg font-bold self-center">Dark Theme</p>
-                                <select
-                                    class="text-base4 w-[30%] theme-bg border-2 theme-border p-2 focus:ring-blue-400 focus:border-blue-400 shadow-xs"
-                                    onChange={ e => ModifyTheme(e.target.value, false)}
-                                    value={darkTheme()}
-                                >
-                                    <option value="ayu-dark">Ayu Dark</option>
-                                    <option value="ayu-mirage">Ayu Mirage</option>
-                                    <option value="catpuccin-frappe">Catpuccin Frappé</option>
-                                    <option value="catpuccin-macchiato">Catpuccin Macchiato</option>
-                                    <option value="catpuccin-mocha">Catpuccin Mocha</option>
-                                    <option value="github-dark">Default</option>
-                                    <option value="rose-pine">Rosé Pine</option>
-                                    <option value="rose-pine-moon">Rosé Pine Moon</option>
-                                </select>
+
+                            <div class="flex flex-row justify-between gap-1 mb-2 ml-[2%] mr-[2%]">
+                                <p class="text-base4 text-lg font-bold self-center">dark theme</p>
+                                <div class="pb-0.5 relative inline-block w-48">
+                                    <select
+                                        class="appearance-none font-semibold w-full text-left pr-6 theme-fg theme-gutter theme-border focus:outline-none cursor-pointer bg-transparent"
+                                        onChange={e => modifyTheme(e.target.value, false)}
+                                        value={darkTheme()}
+                                    >
+                                        <For each={themeList.dark}>
+                                            {theme => <option class="theme-gutter theme-fg" value={theme.name}>{theme.nameUser}</option>}
+                                        </For>
+                                    </select>
+                                    <svg class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 theme-fg"
+                                        xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-344 240-584l56-56 184 184 184-184 56 56-240 240Z" /></svg>
+                                </div>
                             </div>
                         </div>
                     </Show>
                     <Show when={selection() == 1}>
-                        <div class="flex flex-col w-full h-full border-l-[1px] theme-border justify-center pl-[2%] pb-2 pt-2">
-                            <a class="text-3xl font-bold underline text-base4 hover:text-blue-400" href="https://github.com/ldlaur/ares" >
+                        <div class="flex flex-col w-full h-full justify-center ml-[2%] mr-[2%] pb-2 pt-2">
+                            <a class="text-3xl font-bold underline text-base4 hover:text-highlight-low" href="https://github.com/ldlaur/ares" >
                                 ARES
                             </a>
                             <p class="text-base4 mt-2">
-                                A RISC-V educational simulator designed to help computer architecture students to visualize memory and call stacks, and detect common calling convention mistakes.
+                                A RISC-V (RV32IMC) educational simulator built to help computer architecture students visualize registers, memory, call stacks, and catch common calling convention mistakes.
                             </p>
                             <p class="text-base4">
-                                It is inspired by RARS and MARS, and designed to be a spiritual web successor of them.
+                                It's inspired by RARS and MARS, and aims to be their spiritual successor on the web.
                             </p>
                             <p class="text-base4 mt-1">
-                                If you have any suggestions for new features or have encountered bugs, don't be afraid to open a pull request or an issue on
-                                <a href="https://github.com/ldlaur/ares" class=" pl-1 underline font-bold text-base4 hover:text-blue-400">GitHub</a>.
+                                Found a bug or have a feature idea? Don't hesitate to open an issue or pull request on
+                                <a href="https://github.com/ldlaur/ares" class=" pl-1 underline font-bold text-base4 hover:text-highlight-low">GitHub</a>.
                             </p>
-                            <p class="text-base4 mt-1">Thanks to all contributors and testers, and to everyone who has used it</p>
+                            <p class="text-base4 mt-1">Thanks to all contributors, testers, and everyone who's used ARES.</p>
                         </div>
                     </Show>
                 </div>

@@ -2,11 +2,11 @@ import { Decoration, WidgetType } from "@codemirror/view";
 import { highlightTree } from "@lezer/highlight";
 import { EditorView } from "codemirror";
 import { Component } from "solid-js";
-import { githubHighlightStyle } from "./GithubTheme";
 import { riscvLanguage } from "./RiscVLanguage";
 import { testData } from ".";
 import { TestCaseResult } from "./core/EmulatorState";
 import { startDebugTestCase } from "./EmulatorStore";
+import { highlightStyle } from "./Editor";
 
 class HeaderWidget extends WidgetType {
     constructor() {
@@ -45,7 +45,7 @@ function createHighlightedText(code: string, syntaxHighlight: boolean) {
     let pos = 0
     if (syntaxHighlight) {
         let tree = riscvLanguage.parser.parse(code)
-        highlightTree(tree, githubHighlightStyle, (from, to, classes) => {
+        highlightTree(tree, highlightStyle, (from, to, classes) => {
             if (from > pos) block.appendChild(document.createTextNode(code.slice(pos, from)))
             let span = document.createElement("span")
             span.className = classes
@@ -120,7 +120,7 @@ export const TestSuiteViewer: Component<{ table: TestCaseResult[], currentDebugg
                         const errorType = testcase.runErr ? "crashed" : "mismatched";
                         return (
                             <tr
-                                class={`  border-b theme-mono theme-border ${passed ? 'theme-testsuccess' : 'theme-testfail'}`}
+                                class={`  border-b theme-mono theme-border ${passed ? 'bg-testgreen' : 'bg-testred'}`}
                             >
                                 <td class="px-2">
                                     {passed ?

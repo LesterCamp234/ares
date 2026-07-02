@@ -12,7 +12,6 @@ import { doSave, EditorToolbar } from "./EditorToolbar";
 import { MemoryView } from "./MemoryView";
 import { PaneResize } from "./PaneResize";
 import { RegisterTable } from "./RegisterTable";
-import { currentTheme } from "./Theme";
 import { TEXT_BASE } from "./core/RiscV";
 import { buildForLinter, consoleText, continueExecution, nextStep, quitDebug, reverseStep, run, runTestSuite, setBreakpointLines, singleStep, startDebug, state, testSuiteIndex, testSuiteResults } from "./EmulatorStore";
 import { TestSuiteViewer } from "./TestSuite";
@@ -95,7 +94,6 @@ const App: Component = () => {
 											editorInterfaceRef={editorInterface} setBreakpoints={setBreakpointLines}
 											diagnostics={state.status == "asmerr" ? state.error : undefined}
 											doBuild={(s) => buildForLinter(s)}
-											theme={currentTheme()}
 											onHoveredLine={line => setAddress(line !== null ? emulator.getAddrFromLine(line) : { start: 0, len: 0 })}
 										/>}
 										{r => <BacktraceView shadowStack={r.shadowStack} />}

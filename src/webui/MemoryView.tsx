@@ -22,12 +22,10 @@ const AddressGutter: Component<{
     charWidth: number,
     addrSelect: number,
     setAddrSelect: (s: number) => void,
-    highlighted?: boolean,
 }> = (props) => (
     <div
-        class={"theme-style6 shrink-0 w-[10ch] tabular-nums " +
-            (props.addrSelect === props.index ? "select-text " : "select-none ") +
-            (props.highlighted ? "theme-fg" : "theme-fg2")}
+        class={"text-lightblue shrink-0 w-[10ch] tabular-nums " +
+            (props.addrSelect === props.index ? "select-text " : "select-none ")}
         onMouseDown={(e) => { props.setAddrSelect(props.index); e.stopPropagation(); }}
     >
         {props.addr.toString(16).padStart(8, "0")}
@@ -78,7 +76,6 @@ const DisasmView: Component<{
                                 charWidth={props.charWidth}
                                 addrSelect={props.addrSelect()}
                                 setAddrSelect={props.setAddrSelect}
-                                highlighted={addr === props.pc}
                             />
                             {(() => {
                                 // trigger reactivity when the code changes
@@ -298,7 +295,7 @@ export const MemoryView: Component<{
             <TabSelector tab={activeTab()} setTab={setActiveTab} tabs={[".text", "disasm", ".data", "stack", "frames"]} />
 
             <div class="font-semibold theme-mono ml-2 theme-fg">
-                <span class="theme-style6 inline-block" style={{ width: charWidth() * 10 + "px" }}>address</span>
+                <span class="text-lightblue inline-block" style={{ width: charWidth() * 10 + "px" }}>address</span>
                 <span>{activeTab() === "disasm" ? "instructions" : "contents"}</span>
             </div>
 

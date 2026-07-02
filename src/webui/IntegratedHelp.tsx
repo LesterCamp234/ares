@@ -341,9 +341,9 @@ export const IntegratedHelp: Component<{ close: () => void }> = (props) => {
                                             <div class="items-baseline pr-3">
                                                 <Show
                                                     when={item.pseudo !== ""}
-                                                    fallback={<span class="font-bold theme-style2">{item.mnemonic}</span>}
+                                                    fallback={<span class="font-bold text-blue">{item.mnemonic}</span>}
                                                 >
-                                                    <div class="font-bold theme-style3">{item.mnemonic}</div>
+                                                    <div class="font-bold text-orange">{item.mnemonic}</div>
                                                     <div class="text-xs theme-fg">{item.pseudo}</div>
                                                 </Show>
                                             </div>
