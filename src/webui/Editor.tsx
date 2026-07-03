@@ -243,7 +243,7 @@ const cssTheme = EditorView.theme({
     },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-editor-caret)" },
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": { backgroundColor: "var(--color-base2)" },
-    ".cm-activeLine": { "background-color": "var(--color-base1)" },
+    ".cm-activeLine": { "background-color": "var(--color-editor-activeline)" },
     ".cm-content ::selection .cm-activeLine": { backgroundColor: "var(--color-base3)" },
 
     ".cm-panels": { backgroundColor: "var(--color-base1)", color: "var(--color-base5)" },
@@ -271,7 +271,7 @@ const cssTheme = EditorView.theme({
     },
 
     ".cm-activeLineGutter": {
-        backgroundColor: "var(--color-base1)"
+        backgroundColor: "var(--color-editor-activeline)"
     },
 
     ".cm-foldPlaceholder": {
