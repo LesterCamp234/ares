@@ -9,7 +9,7 @@ export const ShadowStack: Component<{ memWrittenAddr: number, memWrittenLen: num
                 <For each={elem.elems}>
                     {(e) => (
                         <div class="flex flex-row">
-                            <a class="text-lightblue pr-2 w-[10ch] tabular-nums">{e.addr.toString(16)}</a>
+                            <a class="text-addrcolumn pr-2 w-[10ch] tabular-nums">{e.addr.toString(16)}</a>
                             <div class={((e.addr >= props.memWrittenAddr &&
                                 e.addr <
                                 props.memWrittenAddr +

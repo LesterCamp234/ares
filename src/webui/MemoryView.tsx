@@ -24,7 +24,7 @@ const AddressGutter: Component<{
     setAddrSelect: (s: number) => void,
 }> = (props) => (
     <div
-        class={"text-lightblue shrink-0 w-[10ch] tabular-nums " +
+        class={"text-addrcolumn shrink-0 w-[10ch] tabular-nums " +
             (props.addrSelect === props.index ? "select-text " : "select-none ")}
         onMouseDown={(e) => { props.setAddrSelect(props.index); e.stopPropagation(); }}
     >
@@ -68,7 +68,7 @@ const DisasmView: Component<{
                     return (
                         <div
                             style={{ "white-space": "nowrap", position: "absolute", top: `${virtRow.start}px`, height: `${virtRow.size}px` }}
-                            class={"flex flex-row items-center w-full " + (addr === props.pc ? "cm-debugging" : "")}
+                            class={"flex flex-row items-center w-full " + (addr === props.pc ? "bg-debugging" : "")}
                         >
                             <AddressGutter
                                 index={virtRow.index}
@@ -166,8 +166,8 @@ const HexView: Component<{
         const isFp = isStack && ptr >= props.fp && ptr < props.fp + 4;
         let style = selectMode;
         if (isGray) style = "theme-fg2";
-        else if (isSp) style = "sp-highlight";
-        else if (isFp) style = "fp-highlight";
+        else if (isSp) style = "bg-sp-highlight";
+        else if (isFp) style = "bg-fp-highlight";
         if (ptr >= highlightStartAligned && ptr < highlightEndAligned)
             style += " font-bold";
         if (isAnimated) style += " animate-fade-highlight";
@@ -295,7 +295,7 @@ export const MemoryView: Component<{
             <TabSelector tab={activeTab()} setTab={setActiveTab} tabs={[".text", "disasm", ".data", "stack", "frames"]} />
 
             <div class="font-semibold theme-mono ml-2 theme-fg">
-                <span class="text-lightblue inline-block" style={{ width: charWidth() * 10 + "px" }}>address</span>
+                <span class="text-addrcolumn inline-block" style={{ width: charWidth() * 10 + "px" }}>address</span>
                 <span>{activeTab() === "disasm" ? "instructions" : "contents"}</span>
             </div>
 

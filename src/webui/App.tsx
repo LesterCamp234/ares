@@ -124,7 +124,7 @@ const App: Component = () => {
 						</PaneResize>}
 						{() => (<div
 							innerText={consoleText() ? consoleText() : "Console output will go here..."}
-							class={"w-full h-full theme-mono ml-2 mt-1 text-md overflow-auto theme-scrollbar theme-bg theme-fg"}
+							class={"w-full h-full theme-mono ml-2 mt-1 text-md overflow-auto theme-scrollbar bg-base0 theme-fg"}
 						></div>)}
 					</PaneResize>}
 				</PaneResize>

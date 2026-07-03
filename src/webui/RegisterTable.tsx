@@ -7,38 +7,38 @@ export const [unitSize, setUnitSize] = createSignal<UnitSize>(4);
 export const RegisterTable: Component<{ pc: number, regs: number[], regWritten: number }> = (props) => {
   // idx is the hardware register number
   const registersLayout = [
-    { name: "ra", idx: 1, color: "text-red" },
-    { name: "sp", idx: 2, color: "text-red" },
+    { name: "ra", idx: 1, color: "text-regtable-special" },
+    { name: "sp", idx: 2, color: "text-regtable-special" },
 
-    { name: "t0", idx: 5, color: "text-blue" },
-    { name: "t1", idx: 6, color: "text-blue" },
-    { name: "t2", idx: 7, color: "text-blue" },
-    { name: "t3", idx: 28, color: "text-blue" },
-    { name: "t4", idx: 29, color: "text-blue" },
-    { name: "t5", idx: 30, color: "text-blue" },
-    { name: "t6", idx: 31, color: "text-blue" },
+    { name: "t0", idx: 5, color: "text-regtable-temp" },
+    { name: "t1", idx: 6, color: "text-regtable-temp" },
+    { name: "t2", idx: 7, color: "text-regtable-temp" },
+    { name: "t3", idx: 28, color: "text-regtable-temp" },
+    { name: "t4", idx: 29, color: "text-regtable-temp" },
+    { name: "t5", idx: 30, color: "text-regtable-temp" },
+    { name: "t6", idx: 31, color: "text-regtable-temp" },
 
-    { name: "a0", idx: 10, color: "text-orange" },
-    { name: "a1", idx: 11, color: "text-orange" },
-    { name: "a2", idx: 12, color: "text-orange" },
-    { name: "a3", idx: 13, color: "text-orange" },
-    { name: "a4", idx: 14, color: "text-orange" },
-    { name: "a5", idx: 15, color: "text-orange" },
-    { name: "a6", idx: 16, color: "text-orange" },
-    { name: "a7", idx: 17, color: "text-orange" },
+    { name: "a0", idx: 10, color: "text-regtable-arg" },
+    { name: "a1", idx: 11, color: "text-regtable-arg" },
+    { name: "a2", idx: 12, color: "text-regtable-arg" },
+    { name: "a3", idx: 13, color: "text-regtable-arg" },
+    { name: "a4", idx: 14, color: "text-regtable-arg" },
+    { name: "a5", idx: 15, color: "text-regtable-arg" },
+    { name: "a6", idx: 16, color: "text-regtable-arg" },
+    { name: "a7", idx: 17, color: "text-regtable-arg" },
 
-    { name: "s0/fp", idx: 8, color: "text-green0" },
-    { name: "s1", idx: 9, color: "text-green0" },
-    { name: "s2", idx: 18, color: "text-green0" },
-    { name: "s3", idx: 19, color: "text-green0" },
-    { name: "s4", idx: 20, color: "text-green0" },
-    { name: "s5", idx: 21, color: "text-green0" },
-    { name: "s6", idx: 22, color: "text-green0" },
-    { name: "s7", idx: 23, color: "text-green0" },
-    { name: "s8", idx: 24, color: "text-green0" },
-    { name: "s9", idx: 25, color: "text-green0" },
-    { name: "s10", idx: 26, color: "text-green0" },
-    { name: "s11", idx: 27, color: "text-green0" },
+    { name: "s0/fp", idx: 8, color: "text-regtable-saved" },
+    { name: "s1", idx: 9, color: "text-regtable-saved" },
+    { name: "s2", idx: 18, color: "text-regtable-saved" },
+    { name: "s3", idx: 19, color: "text-regtable-saved" },
+    { name: "s4", idx: 20, color: "text-regtable-saved" },
+    { name: "s5", idx: 21, color: "text-regtable-saved" },
+    { name: "s6", idx: 22, color: "text-regtable-saved" },
+    { name: "s7", idx: 23, color: "text-regtable-saved" },
+    { name: "s8", idx: 24, color: "text-regtable-saved" },
+    { name: "s9", idx: 25, color: "text-regtable-saved" },
+    { name: "s10", idx: 26, color: "text-regtable-saved" },
+    { name: "s11", idx: 27, color: "text-regtable-saved" },
 
     { name: "gp", idx: 3, color: "" },
     { name: "tp", idx: 4, color: "" },
@@ -67,11 +67,11 @@ export const RegisterTable: Component<{ pc: number, regs: number[], regWritten: 
   // using google material icons keyboard_arrow_down as it matches Chromium's native
   return (
     <div class="overflow-hidden flex-grow h-full self-start flex-shrink flex flex-col">
-      <div class="flex-none flex items-center justify-end theme-gutter border-b theme-border min-h-9">
+      <div class="flex-none flex items-center justify-end bg-base0 border-b theme-border min-h-9">
         <div class="flex flex-wrap items-center gap-1">
           <div class="pb-0.5 relative inline-block">
             <select
-              class="appearance-none font-semibold theme-fg theme-gutter px-2 pr-6 theme-border focus:outline-none cursor-pointer"
+              class="appearance-none font-semibold theme-fg bg-base0 px-2 pr-6 theme-border focus:outline-none cursor-pointer"
               title="Memory unit size"
               value={unitSize()}
               onChange={(e) => handleUnitChange(Number(e.currentTarget.value) as UnitSize)}
@@ -85,7 +85,7 @@ export const RegisterTable: Component<{ pc: number, regs: number[], regWritten: 
           </div>
           <div class="pb-0.5 relative inline-block">
             <select
-              class="appearance-none font-semibold theme-fg theme-gutter px-2 pr-6 theme-border focus:outline-none cursor-pointer"
+              class="appearance-none font-semibold theme-fg bg-base0 px-2 pr-6 theme-border focus:outline-none cursor-pointer"
               title="Number format"
               value={displayFormat()}
               onChange={(e) => handleFormatChange(e.currentTarget.value as DisplayFormat)}

@@ -17,21 +17,21 @@ export const EditorToolbar: Component<{ textGetter: () => string, setText: (s: s
 
                 <div class="flex items-center gap-0.5">
                     <ToolbarBtn
-                        class="theme-bg"
+                        class="bg-base0"
                         icon="help"
                         title="Show integrated help"
                         onClick={() => setIntegratedHelp(true)}
                     />
 
                     <ToolbarBtn
-                        class="theme-bg"
+                        class="bg-base0"
                         icon={themeMode() == "system" ? "night_sight_auto" : themeMode() == "light" ? "sunny" : "dark_mode"}
                         title="Change theme"
                         onClick={() => cycleTheme()}
                     />
 
                     <ToolbarBtn
-                        class="theme-bg"
+                        class="bg-base0"
                         icon="settings"
                         title="Settings"
                         onClick={() => setShowSettings(true)}
@@ -40,13 +40,13 @@ export const EditorToolbar: Component<{ textGetter: () => string, setText: (s: s
                     <div class="w-px h-5 theme-separator mx-1"></div>
 
                     <ToolbarBtn
-                        class="theme-bg"
+                        class="bg-base0"
                         icon="save"
                         title="Save"
                         onClick={() => doSave(props.textGetter())} />
 
                     <ToolbarBtn
-                        class="theme-bg"
+                        class="bg-base0"
                         icon="folder_open"
                         title="Open file"
                         onClick={() => doOpen(props.setText)} />
@@ -55,7 +55,7 @@ export const EditorToolbar: Component<{ textGetter: () => string, setText: (s: s
 
                     <Show when={testsuiteName}>
                         <ToolbarBtn
-                            class="theme-bg"
+                            class="bg-base0"
                             icon="play_circle"
                             title={`Run tests (${prefixStr}-R)`}
                             onClick={() => runTestSuite(props.textGetter())}
@@ -63,13 +63,13 @@ export const EditorToolbar: Component<{ textGetter: () => string, setText: (s: s
                     </Show>
                     <Show when={!testsuiteName}>
                         <ToolbarBtn
-                            class="theme-bg"
+                            class="bg-base0"
                             icon="play_circle"
                             title={`Run (${prefixStr}-R)`}
                             onClick={() => run(props.textGetter())}
                         />
                         <ToolbarBtn
-                            class="theme-bg"
+                            class="bg-base0"
                             icon="arrow_forward"
                             title={`Debug (${prefixStr}-D)`}
                             onClick={() => startDebug(props.textGetter())}
@@ -78,35 +78,35 @@ export const EditorToolbar: Component<{ textGetter: () => string, setText: (s: s
                 </div>
             </div>
             <Show when={state.status == "debug" ? state : null}>{debugRuntime => <>
-                <div class="font-semibold text-sm pl-2 py-1 flex items-center gap-2 theme-bg-debugging pr-1">
+                <div class="font-semibold text-sm pl-2 py-1 flex items-center gap-2 bg-debugging pr-1">
                     <span>Debugging mode, exit it to edit text</span>
                     <div class="flex-grow"></div>
                     <ToolbarBtn
-                        class="theme-bg-debugging"
+                        class="bg-debugging"
                         icon="step_into"
                         title={`Step into (${prefixStr}-S)`}
                         onClick={() => singleStep()}
                     />
                     <ToolbarBtn
-                        class="theme-bg-debugging"
+                        class="bg-debugging"
                         icon="step_over"
                         title={`Step over/Next (${prefixStr}-N)`}
                         onClick={() => nextStep()}
                     />
                     <ToolbarBtn
-                        class="theme-bg-debugging"
+                        class="bg-debugging"
                         icon="resume"
                         title={`Continue (${prefixStr}-C)`}
                         onClick={() => continueExecution()}
                     />
                     <ToolbarBtn
-                        class="theme-bg-debugging"
+                        class="bg-debugging"
                         icon="undo"
                         title={`Reverse step (${prefixStr}-Z)`}
                         onClick={() => reverseStep()}
                     />
                     <ToolbarBtn
-                        class="theme-bg-debugging"
+                        class="bg-debugging"
                         icon="stop"
                         title={`Exit debugging (${prefixStr}-X)`}
                         onClick={() => quitDebug()}
@@ -160,7 +160,7 @@ function doOpen(setText: (s: string) => void) {
 const ToolbarBtn: Component<{ class: string, icon: string; title: string; onClick: () => void }> = (props) => (
     <button
         on:click={props.onClick}
-        class={props.class + " cursor-pointer flex items-center justify-center w-7 h-7 material-symbols-outlined theme-bg-hover theme-bg-active"}
+        class={props.class + " cursor-pointer flex items-center justify-center w-7 h-7 material-symbols-outlined hover:bg-base1 active:bg-base2"}
         style={{ "font-size": "26px" }}
         title={props.title}
     >

@@ -3,15 +3,12 @@ import { createEffect, createRoot, createSignal, onCleanup } from "solid-js";
 export const themeList = {
 	light: [
 		{ name: "ayu-light", nameUser: "Ayu" },
-		{ name: "catpuccin-latte", nameUser: "Catpuccin Latte" },
+		{ name: "catppuccin-latte", nameUser: "Catppuccin Latte" },
 		{ name: "github-light", nameUser: "Default" },
 		{ name: "rose-pine-dawn", nameUser: "Rosé Pine Dawn" },
 	], dark: [
 		{ name: "ayu-dark", nameUser: "Ayu Dark" },
-		{ name: "ayu-mirage", nameUser: "Ayu Mirage" },
-		{ name: "catpuccin-frappe", nameUser: "Catpuccin Frappé" },
-		{ name: "catpuccin-macchiato", nameUser: "Catpuccin Macchiato" },
-		{ name: "catpuccin-mocha", nameUser: "Catpuccin Mocha" },
+		{ name: "catppuccin-mocha", nameUser: "Catppuccin Mocha" },
 		{ name: "github-dark", nameUser: "Default" },
 		{ name: "rose-pine", nameUser: "Rosé Pine" },
 		{ name: "rose-pine-moon", nameUser: "Rosé Pine Moon" },

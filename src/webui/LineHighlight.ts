@@ -17,7 +17,7 @@ export const lineHighlightState = StateField.define<DecorationSet>({
         ) {
           let line = tr.state.doc.line(effect.value);
           return Decoration.set([
-            Decoration.line({ class: "cm-debugging" }).range(
+            Decoration.line({ class: "bg-debugging" }).range(
               line.from,
               line.from,
             ),

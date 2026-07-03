@@ -104,7 +104,7 @@ function parseInlineCode(text: string, container: HTMLElement): void {
 // NOTE: all characters heights are precalculated and valid since it is using monospace fonts entirely
 export const TestSuiteViewer: Component<{ table: TestCaseResult[], currentDebuggingEntry: number, textGetter: () => string }> = props => {
     return (
-        <div class="theme-scrollbar theme-bg theme-fg overflow-x-auto overflow-y-auto w-full h-full">
+        <div class="theme-scrollbar bg-base0 theme-fg overflow-x-auto overflow-y-auto w-full h-full">
             <table class="table w-full max-w-full h-full min-w-full border-collapse rounded-lg ">
                 <thead class=" ">
                     <tr class="  text-left theme-fg border-b theme-border">
@@ -120,7 +120,7 @@ export const TestSuiteViewer: Component<{ table: TestCaseResult[], currentDebugg
                         const errorType = testcase.runErr ? "crashed" : "mismatched";
                         return (
                             <tr
-                                class={`  border-b theme-mono theme-border ${passed ? 'bg-testgreen' : 'bg-testred'}`}
+                                class={`  border-b theme-mono theme-border ${passed ? 'bg-testsuite-green' : 'bg-testsuite-red'}`}
                             >
                                 <td class="px-2">
                                     {passed ?

@@ -236,14 +236,14 @@ const cssTheme = EditorView.theme({
     },
 
     ".cm-content": {
-        caretColor: "var(--color-blue)"
+        caretColor: "var(--color-editor-caret)"
     },
     ".cm-debugging.cm-activeLine": {
-        backgroundColor: "var(--color-bgorange2)"
+        backgroundColor: "var(--color-debugging)"
     },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-blue)" },
-    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": { backgroundColor: "var(--color-highlight-high)" },
-    ".cm-activeLine": { "background-color": "var(--color-highlight-low)" },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-editor-caret)" },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": { backgroundColor: "var(--color-base2)" },
+    ".cm-activeLine": { "background-color": "var(--color-base1)" },
     ".cm-content ::selection .cm-activeLine": { backgroundColor: "var(--color-base3)" },
 
     ".cm-panels": { backgroundColor: "var(--color-base1)", color: "var(--color-base5)" },
@@ -258,7 +258,7 @@ const cssTheme = EditorView.theme({
         backgroundColor: "#6199ff2f"
     },
 
-    ".cm-selectionMatch": { backgroundColor: "var(--color-bggreen)" + "90" },
+    ".cm-selectionMatch": { backgroundColor: "var(--color-editor-selection-match)" },
 
     "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
         backgroundColor: "#bad0f847"
@@ -271,7 +271,7 @@ const cssTheme = EditorView.theme({
     },
 
     ".cm-activeLineGutter": {
-        backgroundColor: "var(--color-highlight-med)"
+        backgroundColor: "var(--color-base1)"
     },
 
     ".cm-foldPlaceholder": {
@@ -355,35 +355,27 @@ const cssTheme = EditorView.theme({
 export const highlightStyle = HighlightStyle.define([
     {
         tag: t.keyword,
-        class: "text-purp"
+        class: "text-editor-insn"
     },
     {
         tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName],
-        class: "text-red"
+        class: "text-editor-reg"
     },
     {
-        tag: [t.function(t.variableName), t.labelName],
-        class: "text-blue"
-    },
-    {
-        tag: [t.color, t.constant(t.name), t.standard(t.name)],
-        class: "text-orange"
-    },
-    {
-        tag: [t.definition(t.name), t.separator],
-        class: "text-base4"
-    },
-    {
-        tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace],
-        class: "text-orange"
+        tag: [t.color, t.constant(t.name), t.standard(t.name), t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace, t.atom, t.bool, t.special(t.variableName)],
+        class: "text-editor-const"
     },
     {
         tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp, t.link, t.special(t.string)],
-        class: "text-lightblue"
+        class: "text-editor-directive"
     },
     {
         tag: [t.meta, t.comment],
-        class: "text-green0"
+        class: "text-editor-comment"
+    },
+    {
+        tag: [t.processingInstruction, t.string, t.inserted],
+        class: "text-editor-string"
     },
     {
         tag: t.strong,
@@ -400,18 +392,6 @@ export const highlightStyle = HighlightStyle.define([
     {
         tag: t.link,
         class: "underline"
-    },
-    {
-        tag: t.heading,
-        class: "text-base3 underline"
-    },
-    {
-        tag: [t.atom, t.bool, t.special(t.variableName)],
-        class: "text-orange"
-    },
-    {
-        tag: [t.processingInstruction, t.string, t.inserted],
-        class: "text-green"
     },
     {
         tag: t.invalid,

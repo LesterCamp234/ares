@@ -311,13 +311,13 @@ export const IntegratedHelp: Component<{ close: () => void }> = (props) => {
             <div
                 ref={modalRef}
                 tabindex="-1"
-                class="relative flex flex-col w-full max-w-[90vw] max-h-[90vh] theme-bg border overflow-hidden theme-border outline-none"
+                class="relative flex flex-col w-full max-w-[90vw] max-h-[90vh] bg-base0 border overflow-hidden theme-scrollbar theme-border outline-none"
                 onClick={(e) => e.stopPropagation()}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="modal-title"
             >
-                <header class="sticky top-0 z-10 flex items-center justify-between pl-4 theme-border border-b theme-bg">
+                <header class="sticky top-0 z-10 flex items-center justify-between pl-4 theme-border border-b bg-base0">
                     <h2 id="modal-title" class="text-lg font-bold theme-fg">
                         instruction and pseudoinstruction reference
                     </h2>
@@ -325,7 +325,7 @@ export const IntegratedHelp: Component<{ close: () => void }> = (props) => {
                         onClick={props.close}
                         aria-label="Close modal"
                         type="button"
-                        class="theme-bg p-2 theme-fg cursor-pointer material-symbols-outlined theme-bg-hover theme-bg-active"
+                        class="bg-base0 p-2 theme-fg cursor-pointer material-symbols-outlined hover:bg-base1 active:bg-base2"
                     >
                         {"close"}
                     </button>
@@ -336,14 +336,14 @@ export const IntegratedHelp: Component<{ close: () => void }> = (props) => {
                         <tbody class="font-mono">
                             <For each={instructions}>
                                 {(item) => (
-                                    <tr class="group border-b theme-border theme-bg theme-bg-hover">
+                                    <tr class="group border-b theme-border bg-base0 hover:bg-base1">
                                         <td class="whitespace-nowrap align-baseline py-2">
                                             <div class="items-baseline pr-3">
                                                 <Show
                                                     when={item.pseudo !== ""}
-                                                    fallback={<span class="font-bold text-blue">{item.mnemonic}</span>}
+                                                    fallback={<span class="font-bold text-inst">{item.mnemonic}</span>}
                                                 >
-                                                    <div class="font-bold text-orange">{item.mnemonic}</div>
+                                                    <div class="font-bold text-pseudoinst">{item.mnemonic}</div>
                                                     <div class="text-xs theme-fg">{item.pseudo}</div>
                                                 </Show>
                                             </div>

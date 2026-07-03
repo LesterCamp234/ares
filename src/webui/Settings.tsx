@@ -35,7 +35,7 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                 aria-modal="true"
                 aria-labelledby="modal-title"
             >
-                <header class="sticky top-0 z-10 flex items-center justify-between pl-4 theme-border border-b theme-bg">
+                <header class="sticky top-0 z-10 flex items-center justify-between pl-4 theme-border border-b bg-base0">
                     <h2 id="modal-title" class="text-lg font-bold text-base4">
                         settings
                     </h2>
@@ -43,18 +43,18 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                         onClick={props.close}
                         aria-label="Close modal"
                         type="button"
-                        class="theme-bg p-2 text-base4 cursor-pointer material-symbols-outlined"
+                        class="bg-base0 p-2 text-base4 cursor-pointer material-symbols-outlined"
                     >
                         {"close"}
                     </button>
                 </header>
 
-                <div class="flex flex-row px-4 h-full items-center theme-bg">
+                <div class="flex flex-row px-4 h-full items-center bg-base0">
                     <div class="flex flex-col pt-4 pb-4 mr-2 pr-4 justify-evenly ">
                         <button
                             type="button"
                             aria-label="Settings"
-                            class="theme-bg text-base4 cursor-pointer text-xl"
+                            class="bg-base0 text-base4 cursor-pointer text-xl"
                             onClick={() => setSelection(0)}
                         >
                             theming
@@ -62,7 +62,7 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                         <button
                             type="button"
                             aria-label="Settings"
-                            class="theme-bg text-base4 cursor-pointer text-xl mt-4"
+                            class="bg-base0 text-base4 cursor-pointer text-xl mt-4"
                             onClick={() => setSelection(1)}
                         >
                             about
@@ -73,12 +73,12 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                                 <p class="text-base4 text-lg font-bold self-center">light theme</p>
                                 <div class="pb-0.5 relative inline-block w-48">
                                     <select
-                                        class="appearance-none font-semibold w-full text-left pr-6 theme-fg theme-gutter theme-border focus:outline-none cursor-pointer bg-transparent"
+                                        class="appearance-none font-semibold w-full text-left pr-6 theme-fg bg-base0 theme-border focus:outline-none cursor-pointer bg-transparent"
                                         onChange={e => modifyTheme(e.target.value, true)}
                                         value={lightTheme()}
                                     >
                                         <For each={themeList.light}>
-                                            {theme => <option class="theme-gutter theme-fg" value={theme.name}>{theme.nameUser}</option>}
+                                            {theme => <option class="bg-base0 theme-fg" value={theme.name}>{theme.nameUser}</option>}
                                         </For>
                                     </select>
                                     <svg class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 theme-fg"
@@ -90,12 +90,12 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                                 <p class="text-base4 text-lg font-bold self-center">dark theme</p>
                                 <div class="pb-0.5 relative inline-block w-48">
                                     <select
-                                        class="appearance-none font-semibold w-full text-left pr-6 theme-fg theme-gutter theme-border focus:outline-none cursor-pointer bg-transparent"
+                                        class="appearance-none font-semibold w-full text-left pr-6 theme-fg bg-base0 theme-border focus:outline-none cursor-pointer bg-transparent"
                                         onChange={e => modifyTheme(e.target.value, false)}
                                         value={darkTheme()}
                                     >
                                         <For each={themeList.dark}>
-                                            {theme => <option class="theme-gutter theme-fg" value={theme.name}>{theme.nameUser}</option>}
+                                            {theme => <option class="bg-base0 theme-fg" value={theme.name}>{theme.nameUser}</option>}
                                         </For>
                                     </select>
                                     <svg class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 theme-fg"
@@ -117,9 +117,12 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                             </p>
                             <p class="text-base4 mt-1">
                                 Found a bug or have a feature idea? Don't hesitate to open an issue or pull request on
-                                <a href="https://github.com/ldlaur/ares" class=" pl-1 underline font-bold text-base4 hover:text-highlight-low">GitHub</a>.
+                                <a href="https://github.com/ldlaur/ares" class=" pl-1 underline font-bold text-base4">GitHub</a>.
                             </p>
-                            <p class="text-base4 mt-1">Thanks to all contributors, testers, and everyone who's used ARES.</p>
+                            <p class="text-base4 mt-1 pb-2">Thanks to all contributors, testers, and everyone who's used ARES.</p>
+                            <p class="text-base4 mt-1">Rosé Pine theme based on the original at <a class="underline" href="https://rosepinetheme.com/">https://rosepinetheme.com/</a></p>
+                            <p class="text-base4 mt-1">Catppuccin theme based on the original at <a class="underline" href="https://catppuccin.com/">https://catppuccin.com/</a></p>
+                            <p class="text-base4 mt-1">Ayu theme based on the original at <a class="underline" href="https://ayutheme.com/">https://ayutheme.com/</a></p>
                         </div>
                     </Show>
                 </div>
