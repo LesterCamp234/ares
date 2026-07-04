@@ -49,6 +49,8 @@
   --color-base5: #ecf2f8;
   --color-testsuite-red: #44252e;
   --color-testsuite-green: #3b5242;
+  --color-button-hover: #19172480;
+  --color-button-active: #191724c0;
 
   /* based on the neovim theme: https://github.com/rose-pine/neovim */
   --temp-_nc: #16141f;
@@ -103,6 +105,8 @@
   --color-base5: #ecf2f8;
   --color-testsuite-red: #44252e;
   --color-testsuite-green: #3b5242;
+  --color-button-hover: #19172480;
+  --color-button-active: #191724c0;
 
   /* based on the neovim theme: https://github.com/rose-pine/neovim */
   --temp-_nc: #1f1d30;
@@ -157,6 +161,8 @@
   --color-highlight-med: #dfdad968;
   --color-highlight-high: #dfdad9;
   --color-editor-selection-match: #d7827e20;
+  --color-button-hover: #ebe4da80;
+  --color-button-active: #ebe4dac0;
 
   /* based on the neovim theme: https://github.com/rose-pine/neovim */
   --temp-_nc: #f8f0e7;
@@ -229,6 +235,9 @@
   --temp-base: #eff1f5;
   --temp-mantle: #e6e9ef;
   --temp-crust: #dce0e8;
+  
+  --color-button-hover: #eff1f580;
+  --color-button-active: #eff1f5a0;
 
   --color-base0: var(--temp-base);
   --color-base1: var(--temp-mantle);
@@ -292,6 +301,10 @@
   --temp-mantle: #181825;
   --temp-crust: #11111b;
 
+  --color-button-hover: #18182580;
+  --color-button-active: #181825a0;
+
+
   --color-base0: var(--temp-base);
   --color-base1: var(--temp-surface0);
   --color-base1a: var(--temp-surface0);
@@ -334,10 +347,14 @@
   --color-base3: #b8b6ac;
   --color-base4: #5c6166;
   --color-base5: #43484c;
-  --color-testsuite-red: #fdecea;
+  --color-testsuite-red: #fdecea; 
   --color-testsuite-green: #ebf5e8;
   --color-editor-selection-match: #ffe294;
   --color-editor-activeline: #e7e6dd50;
+
+  --color-button-hover: #e7e6dd80;
+  --color-button-active: #e7e6ddc0;
+
 
   --color-sp-highlight: var(--color-testsuite-green);
   --color-fp-highlight: var(--color-testsuite-red);
@@ -349,7 +366,7 @@
   --color-pseudoinst: #55b4d4;
   --color-inst: #FA8532;
   --color-addrcolumn: #478acc;
-  --color-debugging: #ffcc55;
+  --color-debugging: rgb(228, 226, 127);
   --color-editor-caret: #eba400;
   --color-editor-insn: #FA8532;
   --color-editor-reg: #22A4E6;
@@ -368,6 +385,9 @@
   --color-base4: #BFBDB6;
   --color-base5: #ecf2f8;
 
+  --color-button-hover: #1d253180;
+  --color-button-active: #1d2531c0; 
+
   --color-testsuite-red: #471c0f;
   --color-testsuite-green: #204729;
   --color-editor-selection-match: #4c4126;
@@ -383,7 +403,7 @@
   --color-pseudoinst: #39bae6;
   --color-inst: #FF8E3D;
   --color-addrcolumn: #7eb8ff;
-  --color-debugging: #2f1025;
+  --color-debugging: #4c153b;
   --color-editor-caret: #eba400;
   --color-editor-insn: #FF8E3D;
   --color-editor-reg: #39bae6;
@@ -405,6 +425,9 @@
   --color-testsuite-red: #fdefdf;
   --color-testsuite-green: #e2fbe5;
   --color-editor-selection-match: #8cf39b90;
+
+  --color-button-hover: #d1d5da60;
+  --color-button-active: #d1d5daa0; 
 
   --temp-green: #008110;
   --temp-purp: #8250df;
@@ -444,6 +467,9 @@
   --color-base3: #89929b;
   --color-base4: #c6cdd5;
   --color-base5: #ecf2f8;
+
+  --color-button-hover: #161b2260;
+  --color-button-active: #161b22a0; 
 
   --color-green0: #5ec76e;
   --color-red: #fa7970;

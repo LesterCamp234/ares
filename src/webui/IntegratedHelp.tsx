@@ -1,4 +1,5 @@
 import { Component, createEffect, For, onCleanup, Show } from "solid-js";
+import { Modal } from "./Modal";
 
 
 let string = `
@@ -304,61 +305,35 @@ export const IntegratedHelp: Component<{ close: () => void }> = (props) => {
     });
 
     return (
-        <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
-            onClick={props.close}
-        >
-            <div
-                ref={modalRef}
-                tabindex="-1"
-                class="relative flex flex-col w-full max-w-[90vw] max-h-[90vh] bg-base0 border overflow-hidden theme-scrollbar theme-border outline-none"
-                onClick={(e) => e.stopPropagation()}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="modal-title"
-            >
-                <header class="sticky top-0 z-10 flex items-center justify-between pl-4 theme-border border-b bg-base0">
-                    <h2 id="modal-title" class="text-lg font-bold theme-fg">
-                        instruction and pseudoinstruction reference
-                    </h2>
-                    <button
-                        onClick={props.close}
-                        aria-label="Close modal"
-                        type="button"
-                        class="bg-base0 p-2 theme-fg cursor-pointer material-symbols-outlined hover:bg-base1 active:bg-base2"
-                    >
-                        {"close"}
-                    </button>
-                </header>
+        <Modal title={"instruction and pseudoinstruction reference"} close={props.close}>
 
-                <div class="overflow-y-auto px-4 pb-4">
-                    <table class="w-full border-collapse">
-                        <tbody class="font-mono">
-                            <For each={instructions}>
-                                {(item) => (
-                                    <tr class="group border-b theme-border bg-base0 hover:bg-base1">
-                                        <td class="whitespace-nowrap align-baseline py-2">
-                                            <div class="items-baseline pr-3">
-                                                <Show
-                                                    when={item.pseudo !== ""}
-                                                    fallback={<span class="font-bold text-inst">{item.mnemonic}</span>}
-                                                >
-                                                    <div class="font-bold text-pseudoinst">{item.mnemonic}</div>
-                                                    <div class="text-xs theme-fg">{item.pseudo}</div>
-                                                </Show>
-                                            </div>
-                                        </td>
-                                        <td class="theme-fg italic text-sm align-baseline py-2">
-                                            {item.description}
-                                        </td>
-                                    </tr>
-                                )}
-                            </For>
-                        </tbody>
-                    </table>
-                    <pre class="pt-3 theme-fg whitespace-pre-wrap">{asterisks}</pre>
-                </div>
+            <div class="overflow-y-auto px-4 pb-4">
+                <table class="w-full border-collapse">
+                    <tbody class="font-mono">
+                        <For each={instructions}>
+                            {(item) => (
+                                <tr class="group border-b theme-border bg-base0 hover:bg-base1">
+                                    <td class="whitespace-nowrap align-baseline py-2">
+                                        <div class="items-baseline pr-3">
+                                            <Show
+                                                when={item.pseudo !== ""}
+                                                fallback={<span class="font-bold text-inst">{item.mnemonic}</span>}
+                                            >
+                                                <div class="font-bold text-pseudoinst">{item.mnemonic}</div>
+                                                <div class="text-xs theme-fg">{item.pseudo}</div>
+                                            </Show>
+                                        </div>
+                                    </td>
+                                    <td class="theme-fg italic text-sm align-baseline py-2">
+                                        {item.description}
+                                    </td>
+                                </tr>
+                            )}
+                        </For>
+                    </tbody>
+                </table>
+                <pre class="pt-3 theme-fg whitespace-pre-wrap">{asterisks}</pre>
             </div>
-        </div>
+        </Modal>
     );
 };

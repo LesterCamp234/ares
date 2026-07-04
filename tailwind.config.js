@@ -16,6 +16,9 @@ export default {
         "base5": "var(--color-base5)",
         "border": "var(--color-border)",
 
+        "button-hover": "var(--color-button-hover)",
+        "button-active": "var(--color-button-active)",
+
         "breakpoints": "var(--color-breakpoints)",
 
         "pseudoinst": "var(--color-pseudoinst)",

@@ -160,7 +160,7 @@ function doOpen(setText: (s: string) => void) {
 const ToolbarBtn: Component<{ class: string, icon: string; title: string; onClick: () => void }> = (props) => (
     <button
         on:click={props.onClick}
-        class={props.class + " cursor-pointer flex items-center justify-center w-7 h-7 material-symbols-outlined hover:bg-base1 active:bg-base2"}
+        class={props.class + " cursor-pointer flex items-center justify-center w-7 h-7 material-symbols-outlined hover:bg-button-hover active:bg-button-active"}
         style={{ "font-size": "26px" }}
         title={props.title}
     >
