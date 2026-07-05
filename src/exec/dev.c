@@ -1,12 +1,13 @@
 #include "ares/dev.h"
 
+#include "ares/core.h"
 #include "ares/emulate.h"
 
 #define MMIO_OP_READ 0
 #define MMIO_OP_WRITE 1
 
-typedef bool (*DeviceHandler)(u32 devaddr, u8 *buf, u32 op_size, u32 off,
-                              int op);
+typedef bool (*DeviceHandler)(AresState *g, u32 devaddr, u8 *buf, u32 op_size,
+                              u32 off, int op);
 
 typedef struct {
     DeviceHandler handler;
@@ -37,14 +38,15 @@ typedef struct {
 
 static Device g_mmio_devices[];
 
-static void ric_send_interrupt(u32 devaddr) {
+static void ric_send_interrupt(AresState *g, u32 devaddr) {
     RICRegisters *ric = (void *)g_mmio_devices[6].buffer;
     ric->devaddr = devaddr;
-    emulator_interrupt_set_pending(CAUSE_SUPERVISOR_EXTERNAL &
-                                   ~CAUSE_INTERRUPT);
+    emulator_interrupt_set_pending(
+        g, CAUSE_SUPERVISOR_EXTERNAL & ~CAUSE_INTERRUPT);
 }
 
-static bool dma_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off, int op) {
+static bool dma_handler(AresState *g, u32 devaddr, u8 *buf, u32 op_size,
+                        u32 off, int op) {
     if (MMIO_OP_READ == op) {
         return true;
     }
@@ -64,13 +66,13 @@ static bool dma_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off, int op) {
         u32 src_addr = dma->src_addr + src_off;
 
         bool load_err;
-        u32 data = LOAD(src_addr, dma->trans_size, &load_err);
+        u32 data = LOAD(g, src_addr, dma->trans_size, &load_err);
         if (load_err) {
             return false;
         }
 
         bool store_err;
-        STORE(dst_addr, data, dma->trans_size, &store_err);
+        STORE(g, dst_addr, data, dma->trans_size, &store_err);
         if (store_err) {
             return false;
         }
@@ -79,7 +81,8 @@ static bool dma_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off, int op) {
     return true;
 }
 
-static bool power_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off, int op) {
+static bool power_handler(AresState *g, u32 devaddr, u8 *buf, u32 op_size,
+                          u32 off, int op) {
     if (MMIO_OP_READ == op) {
         return true;
     }
@@ -94,8 +97,8 @@ static bool power_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off, int op) {
     return true;
 }
 
-static bool console_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off,
-                            int op) {
+static bool console_handler(AresState *g, u32 devaddr, u8 *buf, u32 op_size,
+                            u32 off, int op) {
     ConsoleRegisters *console = (void *)buf;
 
     if (op == MMIO_OP_READ) {
@@ -114,14 +117,15 @@ static bool console_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off,
         console->in_size++;
         if (console->in_size >= console->batch_size) {
             console->in_size = 0;
-            ric_send_interrupt(devaddr);
+            ric_send_interrupt(g, devaddr);
         }
     }
 
     return true;
 }
 
-static bool ric_handler(u32 devaddr, u8 *buf, u32 op_size, u32 off, int op) {
+static bool ric_handler(AresState *g, u32 devaddr, u8 *buf, u32 op_size,
+                        u32 off, int op) {
     return op == MMIO_OP_READ;
 }
 
@@ -135,7 +139,7 @@ static Device g_mmio_devices[] = {
     [6] = {ric_handler, {0}},      // RIC 0
 };
 
-bool mmio_read(u32 mmio_addr, int size, u32 *ret) {
+bool mmio_read(AresState *g, u32 mmio_addr, int size, u32 *ret) {
     u32 dev_num = mmio_addr / MMIO_DEVICE_RSV;
     u32 dev_addr = MMIO_BASE + dev_num * MMIO_DEVICE_RSV;
 
@@ -146,7 +150,7 @@ bool mmio_read(u32 mmio_addr, int size, u32 *ret) {
     Device *dev = &g_mmio_devices[dev_num];
     u8 *buf = dev->buffer;
     u32 off = mmio_addr - (dev_num * MMIO_DEVICE_RSV);
-    bool ok = dev->handler(dev_addr, buf, size, off, MMIO_OP_READ);
+    bool ok = dev->handler(g, dev_addr, buf, size, off, MMIO_OP_READ);
 
     if (!ok) {
         *ret = 0;
@@ -156,7 +160,7 @@ bool mmio_read(u32 mmio_addr, int size, u32 *ret) {
     return ares_buf_read(buf, size, ret);
 }
 
-bool mmio_write(u32 mmio_addr, int size, u32 value) {
+bool mmio_write(AresState *g, u32 mmio_addr, int size, u32 value) {
     u32 dev_num = mmio_addr / MMIO_DEVICE_RSV;
     u32 dev_addr = MMIO_BASE + dev_num * MMIO_DEVICE_RSV;
 
@@ -170,5 +174,5 @@ bool mmio_write(u32 mmio_addr, int size, u32 value) {
         return false;
     }
 
-    return dev->handler(dev_addr, buf, size, off, MMIO_OP_WRITE);
+    return dev->handler(g, dev_addr, buf, size, off, MMIO_OP_WRITE);
 }

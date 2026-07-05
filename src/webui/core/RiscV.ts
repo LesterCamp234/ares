@@ -9,12 +9,6 @@ export const REG_RA = 1;
 export const REG_SP = 2;
 export const REG_FP = 8;
 
-export const SHADOW_STACK_ENT_SIZE = 96 / 4;
-export const SHADOW_STACK_PC = 0;
-export const SHADOW_STACK_SP = 1;
-export const SHADOW_STACK_ARGS = 2;
-export const SHADOW_STACK_ARG_COUNT = 8;
-
 export function toUnsigned(x: number): number {
   return x >>> 0;
 }
@@ -36,33 +30,46 @@ export function instructionSizeFromHalfword(halfword: number): number {
 }
 
 interface WasmExports {
-  emulate(): void;
-  assemble: (offset: number, len: number, allow_externs: boolean) => void;
-  pc_to_label: (pc: number) => void;
-  get_addr_from_line: (address: number) => void;
-  get_line_from_pc: () => number;
+  get_pc: (g: number) => number;
+  get_reg: (g: number, idx: number) => number;
+  set_reg: (g: number, idx: number, value: number) => void;
+  get_csr: (g: number, idx: number) => number;
+  set_csr: (g: number, idx: number, value: number) => void;
+  get_privilege_level: (g: number,) => number;
+  get_exited: (g: number) => number;
+  get_exit_code: (g: number) => number;
+  get_error_line: (g: number) => number;
+  get_error: (g: number) => number;
+  get_runtime_error_type: (g: number) => number;
+  get_runtime_error_params: (g: number, idx: number) => number;
+  get_mem_written_addr: (g: number) => number;
+  get_mem_written_len: (g: number) => number;
+  get_reg_written: (g: number) => number;
+  get_got_breakpoint: (g: number) => number;
+  get_callsan_written_by: (g: number, offset: number) => number;
+  get_shadow_stack_len: (g: number) => number;
+  get_shadow_stack_pc: (g: number, ent: number) => number;
+  get_shadow_stack_sp: (g: number, ent: number) => number;
+  get_shadow_stack_args: (g: number, ent: number, i: number) => number;
+
+  // Core functions
+  emulate: (g: number) => void;
+  assemble: (g: number, offset: number, len: number, allow_externs: boolean) => void;
+  pc_to_label: (g: number, pc: number) => void;
+  get_addr_from_line: (g: number, address: number) => void;
+  get_line_from_pc: (g: number) => number;
+  emu_load: (g: number, addr: number, size: number) => number;
+  emu_disassemble_addr: (g: number, addr: number) => number;
+
   g_get_addr_from_line_start: number;
   g_get_addr_from_line_end: number;
-  emu_load: (addr: number, size: number) => number;
-  emu_disassemble_addr: (addr: number) => number;
-  __heap_base: number;
-  g_regs: number;
-  g_heap_size: number;
-  g_mem_written_addr: number;
   g_emu_disassemble_buf: number;
-  g_mem_written_len: number;
-  g_got_breakpoint: number;
-  g_reg_written: number;
-  g_pc: number;
-  g_error: number;
-  g_error_line: number;
-  g_runtime_error_pc: number;
-  g_runtime_error_params: number;
-  g_runtime_error_type: number;
   g_pc_to_label_txt: number;
   g_pc_to_label_len: number;
-  g_shadow_stack: number;
-  g_callsan_stack_written_by: number;
+  g_state: number;
+
+  __heap_base: number;
+  g_heap_size: number;
 }
 
 const INSTRUCTION_LIMIT: number = 100 * 1000;
@@ -73,17 +80,6 @@ export class WasmInterface {
   private readonly wasmInstance: WebAssembly.Instance;
   private readonly exports: WasmExports;
   private readonly originalMemory: Uint8Array;
-  public readonly regsArr: Uint32Array;
-  public readonly memWrittenLen: Uint32Array;
-  public readonly gotBreakpoint: Uint32Array;
-  public readonly memWrittenAddr: Uint32Array;
-  public readonly regWritten: Uint32Array;
-  public readonly pc: Uint32Array;
-  public readonly runtimeErrorParams: Uint32Array;
-  public readonly runtimeErrorType: Uint32Array;
-  public readonly shadowStackPtr: Uint32Array;
-  public readonly shadowStackLen: Uint32Array;
-  public readonly callsanWrittenBy: Uint8Array;
   public readonly getAddrFromLineStart: Uint32Array;
   public readonly getAddrFromLineEnd: Uint32Array;
 
@@ -92,7 +88,7 @@ export class WasmInterface {
 
   public textBuffer: string = "";
   public hasError: boolean = false;
-  public numOfExecutedInstructions: number = 0; // Total number of instructions executed
+  public numOfExecutedInstructions: number = 0;
 
   public emu_load: (addr: number, size: number) => number;
 
@@ -100,24 +96,9 @@ export class WasmInterface {
     this.memory = memory;
     this.wasmInstance = instance;
     this.exports = this.wasmInstance.exports as unknown as WasmExports;
-    this.emu_load = this.exports.emu_load;
+    this.emu_load = (a, s) => this.exports.emu_load(this.exports.g_state, a, s);
     this.originalMemory = new Uint8Array(this.memory.buffer.slice(0));
     this.currRunMemory = new Uint8Array(this.memory.buffer.slice(0));
-    this.memWrittenAddr = this.createU32(this.exports.g_mem_written_addr);
-    this.memWrittenLen = this.createU32(this.exports.g_mem_written_len);
-    this.gotBreakpoint = this.createU32(this.exports.g_got_breakpoint);
-    this.regWritten = this.createU32(this.exports.g_reg_written);
-    this.pc = this.createU32(this.exports.g_pc);
-    this.regsArr = this.createU32(this.exports.g_regs);
-    this.runtimeErrorParams = this.createU32(
-      this.exports.g_runtime_error_params,
-    );
-    this.runtimeErrorType = this.createU32(this.exports.g_runtime_error_type);
-    this.shadowStackLen = this.createU32(this.exports.g_shadow_stack);
-    this.shadowStackPtr = this.createU32(this.exports.g_shadow_stack + 8);
-    this.callsanWrittenBy = this.createU8(
-      this.exports.g_callsan_stack_written_by,
-    );
     this.getAddrFromLineStart = this.createU32(this.exports.g_get_addr_from_line_start);
     this.getAddrFromLineEnd = this.createU32(this.exports.g_get_addr_from_line_end);
   }
@@ -152,10 +133,92 @@ export class WasmInterface {
     return iface;
   }
 
-  build(
-    source: string,
-  ): { line: number; message: string } | null {
+  getPc(): number {
+    return this.exports.get_pc(this.exports.g_state);
+  }
 
+  getReg(idx: number): number {
+    return this.exports.get_reg(this.exports.g_state, idx);
+  }
+
+  setReg(idx: number, value: number): void {
+    this.exports.set_reg(this.exports.g_state, idx, value);
+  }
+
+  getCsr(idx: number): number {
+    return this.exports.get_csr(this.exports.g_state, idx);
+  }
+
+  setCsr(idx: number, value: number): void {
+    this.exports.set_csr(this.exports.g_state, idx, value);
+  }
+
+  getPrivilegeLevel(): number {
+    return this.exports.get_privilege_level(this.exports.g_state);
+  }
+
+  getExited(): boolean {
+    return this.exports.get_exited(this.exports.g_state) !== 0;
+  }
+
+  getExitCode(): number {
+    return this.exports.get_exit_code(this.exports.g_state);
+  }
+
+  getErrorLine(): number {
+    return this.exports.get_error_line(this.exports.g_state);
+  }
+
+  getError(): number {
+    return this.exports.get_error(this.exports.g_state);
+  }
+
+  getRuntimeErrorType(): number {
+    return this.exports.get_runtime_error_type(this.exports.g_state);
+  }
+
+  getRuntimeErrorParam(idx: number): number {
+    return this.exports.get_runtime_error_params(this.exports.g_state, idx);
+  }
+
+  getMemWrittenAddr(): number {
+    return this.exports.get_mem_written_addr(this.exports.g_state);
+  }
+
+  getMemWrittenLen(): number {
+    return this.exports.get_mem_written_len(this.exports.g_state);
+  }
+
+  getRegWritten(): number {
+    return this.exports.get_reg_written(this.exports.g_state);
+  }
+
+  getGotBreakpoint(): boolean {
+    return this.exports.get_got_breakpoint(this.exports.g_state) !== 0;
+  }
+
+  getShadowStackLen(): number {
+    return this.exports.get_shadow_stack_len(this.exports.g_state);
+  }
+
+  getShadowStackPc(ent: number): number {
+    return this.exports.get_shadow_stack_pc(this.exports.g_state, ent);
+  }
+
+  getShadowStackSp(ent: number): number {
+    return this.exports.get_shadow_stack_sp(this.exports.g_state, ent);
+  }
+
+  getShadowStackArgs(ent: number, i: number): number {
+    return this.exports.get_shadow_stack_args(this.exports.g_state, ent, i);
+  }
+
+
+  getCallsanWrittenBy(offset: number): number {
+    return this.exports.get_callsan_written_by(this.exports.g_state, offset);
+  }
+
+  build(source: string): { line: number; message: string } | null {
     this.successfulExecution = false;
     this.textBuffer = "";
     this.hasError = false;
@@ -175,11 +238,11 @@ export class WasmInterface {
     }
 
     this.createU8(offset).set(strBytes);
-    this.createU32(this.exports.g_heap_size)[0] = (strLen + 7) & ~7; // align up to 8
-    this.exports.assemble(offset, strLen, false);
+    this.createU32(this.exports.g_heap_size)[0] = (strLen + 7) & ~7;
+    this.exports.assemble(this.exports.g_state, offset, strLen, false);
 
-    const errorLine = this.createU32(this.exports.g_error_line)[0];
-    const errorPtr = this.createU32(this.exports.g_error)[0];
+    const errorLine = this.getErrorLine();
+    const errorPtr = this.getError();
     if (errorPtr) {
       const error = this.createU8(errorPtr);
       const errorLen = error.indexOf(0);
@@ -187,15 +250,11 @@ export class WasmInterface {
       return { line: errorLine, message: errorStr };
     }
     this.currRunMemory = new Uint8Array(this.memory.buffer.slice(0));
-
     return null;
-  }
-  getShadowStack(): Uint32Array {
-    return this.createU32(this.shadowStackPtr[0]);
   }
 
   getStringFromPc(pc: number): string {
-    this.exports.pc_to_label(pc);
+    this.exports.pc_to_label(this.exports.g_state, pc);
     const labelPtr = this.createU32(this.exports.g_pc_to_label_txt)[0];
     if (labelPtr) {
       const labelLen = this.createU32(this.exports.g_pc_to_label_len)[0];
@@ -207,17 +266,19 @@ export class WasmInterface {
   }
 
   getAddrFromLine(line: number): { start: number, len: number } {
-    this.exports.get_addr_from_line(line);
-    return { start: this.getAddrFromLineStart[0], len: this.getAddrFromLineEnd[0] - this.getAddrFromLineStart[0] };
+    this.exports.get_addr_from_line(this.exports.g_state, line);
+    return {
+      start: this.getAddrFromLineStart[0],
+      len: this.getAddrFromLineEnd[0] - this.getAddrFromLineStart[0]
+    };
   }
 
   getLineFromPc(): number {
-    return this.exports.get_line_from_pc();
+    return this.exports.get_line_from_pc(this.exports.g_state);
   }
 
-
   disassemble(pc: number): string {
-    const len = this.exports.emu_disassemble_addr(pc);
+    const len = this.exports.emu_disassemble_addr(this.exports.g_state, pc);
     const arr = this.createU8(this.exports.g_emu_disassemble_buf);
     const str = new TextDecoder("utf8").decode(arr.slice(0, len));
     return str;
@@ -225,52 +286,25 @@ export class WasmInterface {
 
   getRegisterName(idx: number): string {
     const regnames = [
-      "zero",
-      "ra",
-      "sp",
-      "gp",
-      "tp",
-      "t0",
-      "t1",
-      "t2",
-      "fp/s0",
-      "s1",
-      "a0",
-      "a1",
-      "a2",
-      "a3",
-      "a4",
-      "a5",
-      "a6",
-      "a7",
-      "s2",
-      "s3",
-      "s4",
-      "s5",
-      "s6",
-      "s7",
-      "s8",
-      "s9",
-      "s10",
-      "s11",
-      "t3",
-      "t4",
-      "t5",
-      "t6",
+      "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+      "fp/s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+      "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+      "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
     ];
     return regnames[idx];
   }
+
   run(): void {
-    this.exports.emulate();
+    this.exports.emulate(this.exports.g_state);
     this.numOfExecutedInstructions++;
     if (this.numOfExecutedInstructions > INSTRUCTION_LIMIT) {
       this.textBuffer += `ERROR: instruction limit ${INSTRUCTION_LIMIT} reached\n`;
       this.hasError = true;
-    } else if (this.runtimeErrorType[0] != 0) {
-      const errorType = this.runtimeErrorType[0];
-      const pcString = `PC=0x${this.pc[0].toString(16)}`;
-      const runtimeParam1 = this.runtimeErrorParams[0];
-      const runtimeParam2 = this.runtimeErrorParams[1];
+    } else if (this.getRuntimeErrorType() != 0) {
+      const errorType = this.getRuntimeErrorType();
+      const pcString = `PC=0x${this.getPc().toString(16)}`;
+      const runtimeParam1 = this.getRuntimeErrorParam(0);
+      const runtimeParam2 = this.getRuntimeErrorParam(1);
       let regname = "";
       let oldVal = "";
       let newVal = "";
@@ -278,8 +312,10 @@ export class WasmInterface {
       switch (errorType) {
         case 1:
           this.textBuffer += `ERROR: Program counter moved outside valid code (${pcString})\n`;
-          if (this.shadowStackLen[0] == 0) this.textBuffer += "Hint: The program may be missing an exit syscall\n";
-          else this.textBuffer += "Hint: This may be caused by a bad jump address or a missing return instruction\n";
+          if (this.getShadowStackLen() == 0)
+            this.textBuffer += "Hint: The program may be missing an exit syscall\n";
+          else
+            this.textBuffer += "Hint: This may be caused by a bad jump address or a missing return instruction\n";
           break;
         case 2:
           str = convertNumber(runtimeParam1, false);
@@ -299,8 +335,8 @@ export class WasmInterface {
         case 6:
           regname = this.getRegisterName(runtimeParam1);
           oldVal = convertNumber(runtimeParam2, false);
-          newVal = convertNumber(this.regsArr[runtimeParam1], false);
-          this.textBuffer += `CallSan: callee-saved register ${regname} was modified but not restored.\n`
+          newVal = convertNumber(this.getReg(runtimeParam1), false);
+          this.textBuffer += `CallSan: callee-saved register ${regname} was modified but not restored.\n`;
           this.textBuffer += `Value at entry: ${oldVal}, at exit: ${newVal}\n`;
           this.textBuffer += "In the RISC-V ABI, s0-s11 must be preserved by the callee.\n";
           this.textBuffer += "The caller expects them to have the same value before and after the function call.\n";
@@ -308,12 +344,12 @@ export class WasmInterface {
           break;
         case 7:
           oldVal = convertNumber(runtimeParam2, false);
-          newVal = convertNumber(this.regsArr[REG_SP], false);
+          newVal = convertNumber(this.getReg(REG_SP), false);
           this.textBuffer += `CallSan: ${pcString}\nRegister sp has different value at the beginning and end of the function.\nPrev: ${oldVal}\nCurr: ${newVal}\nCheck the calling convention!\n`;
           break;
         case 8:
           oldVal = convertNumber(runtimeParam2, false);
-          newVal = convertNumber(this.regsArr[REG_RA], false);
+          newVal = convertNumber(this.getReg(REG_RA), false);
           this.textBuffer += `CallSan: return address register was modified but not restored.\n`;
           this.textBuffer += `Value at entry: ${oldVal}, at exit: ${newVal}\n`;
           this.textBuffer += `Function calls overwrite ra, so in a nested function call, the inner call overwrites the return address of the outer function, preventing return to its caller.\n`;
@@ -344,9 +380,7 @@ export class WasmInterface {
           this.textBuffer += "Hint: S registers are preserved across a call\n";
           break;
         default:
-          this.textBuffer += `ERROR${errorType}: ${pcString} ${this.runtimeErrorParams[0].toString(
-            16,
-          )}\n`;
+          this.textBuffer += `ERROR${errorType}: ${pcString} ${runtimeParam1.toString(16)}\n`;
           break;
       }
       this.hasError = true;
@@ -356,9 +390,9 @@ export class WasmInterface {
   executeNInstructions(n: number): void {
     this.resetToInitialState();
     for (let i = 0; i < n; i++) {
-      this.exports.emulate();
+      this.exports.emulate(this.exports.g_state);
       this.numOfExecutedInstructions++;
-      if (this.runtimeErrorType[0] != 0 || this.hasError || this.successfulExecution) {
+      if (this.getRuntimeErrorType() != 0 || this.hasError || this.successfulExecution) {
         break;
       }
     }

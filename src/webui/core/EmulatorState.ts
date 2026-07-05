@@ -2,11 +2,6 @@ import {
     convertNumber,
     instructionSizeFromHalfword,
     REG_SP,
-    SHADOW_STACK_ARG_COUNT,
-    SHADOW_STACK_ARGS,
-    SHADOW_STACK_ENT_SIZE,
-    SHADOW_STACK_PC,
-    SHADOW_STACK_SP,
     STACK_LEN,
     STACK_TOP,
     TEXT_BASE,
@@ -94,7 +89,11 @@ export class Emulator {
     }
 
     private regs(): number[] {
-        return [...this.wasm.regsArr.slice(0, 32)];
+        const regs = [];
+        for (let i = 0; i < 32; i++) {
+            regs.push(this.wasm.getReg(i));
+        }
+        return regs;
     }
 
     // -- breakpoints --
@@ -173,7 +172,7 @@ export class Emulator {
         { status: "stopped" | "debug" | "error" }
     > {
         const consoleText = this.wasm.textBuffer;
-        const pc = this.wasm.pc[0];
+        const pc = this.wasm.getPc();
         const regs = this.regs();
 
         if (this.wasm.hasError) {
@@ -203,9 +202,9 @@ export class Emulator {
             pc,
             regs,
             shadowStack: this.buildShadowStack(),
-            memWrittenAddr: this.wasm.memWrittenAddr[0],
-            memWrittenLen: this.wasm.memWrittenLen[0],
-            regWritten: this.wasm.regWritten[0],
+            memWrittenAddr: this.wasm.getMemWrittenAddr(),
+            memWrittenLen: this.wasm.getMemWrittenLen(),
+            regWritten: this.wasm.getRegWritten(),
             line: this.getCurrentLine(),
             version: ++this.version,
         });
@@ -293,12 +292,12 @@ export class Emulator {
         if (buildResult.status === "asmerr") return buildResult;
         // switch to debug state with no instructions executed
         let state: EmulatorState = this.advanceState();
-        if (this.wasm.pc[0] != TEXT_BASE) {
+        if (this.wasm.getPc() != TEXT_BASE) {
             // run instructions until you hit user code
             // safety: continueExecution has infinite loop prevention
             state = this.continueExecution({
                 pc: TEXT_BASE,
-                sp: this.wasm.regsArr[REG_SP],
+                sp: this.wasm.getReg(REG_SP),
             });
         }
         return state;
@@ -312,7 +311,7 @@ export class Emulator {
 
     nextStep(): EmulatorState {
         if (this.currentState.status != "debug") return this.currentState;
-        const pc = this.wasm.pc[0];
+        const pc = this.wasm.getPc();
         const halfword = this.load(pc, 2);
         const size = instructionSizeFromHalfword(halfword);
         const inst = size === 2 ? halfword : this.load(pc, 4);
@@ -341,7 +340,7 @@ export class Emulator {
         if (isCall) {
             let state = this.continueExecution({
                 pc: pc + size,
-                sp: this.wasm.regsArr[REG_SP],
+                sp: this.wasm.getReg(REG_SP),
             });
             return state;
         }
@@ -359,20 +358,21 @@ export class Emulator {
         this.resolveBreakpoints();
         while (true) {
             this.wasm.run();
-            const pc = this.wasm.pc[0];
+            const pc = this.wasm.getPc();
             if (
                 temporaryBreakpoint &&
                 temporaryBreakpoint.pc === pc &&
-                temporaryBreakpoint.sp === this.wasm.regsArr[REG_SP]
+                temporaryBreakpoint.sp === this.wasm.getReg(REG_SP)
             ) {
                 break;
             }
-            if (this.wasm.gotBreakpoint[0] === 1) break;
+            if (this.wasm.getGotBreakpoint()) break;
             if (this.breakpointAddrs.has(pc)) break;
             if (this.wasm.successfulExecution || this.wasm.hasError) break;
         }
         return this.advanceState();
     }
+
 
     // NOTE: this is O(n), it restarts from the start of the program
     // for now it's fine, but consider a snapshot system later
@@ -380,9 +380,9 @@ export class Emulator {
         if (this.currentState.status != "debug") return this.currentState;
         if (this.wasm.numOfExecutedInstructions <= 0) return this.currentState;
 
-        const oldAddr = this.wasm.memWrittenAddr[0];
-        const oldLen = this.wasm.memWrittenLen[0];
-        const oldReg = this.wasm.regWritten[0];
+        const oldAddr = this.wasm.getMemWrittenAddr();
+        const oldLen = this.wasm.getMemWrittenLen();
+        const oldReg = this.wasm.getRegWritten();
 
         this.wasm.reverseStep();
         let state = this.advanceState();
@@ -399,23 +399,20 @@ export class Emulator {
     // -- auxiliary --
 
     private buildShadowStack(): ShadowStackEntry[] {
+
         // shadow stack is reversed compared to a regular stack:
         // since it is just a vector
         // i.e. the most recent element is the last one
-        const len = this.wasm.shadowStackLen[0];
-        const raw = this.wasm.getShadowStack();
-        let liveSp = this.wasm.regsArr[REG_SP];
+        const len = this.wasm.getShadowStackLen();
+        let liveSp = this.wasm.getReg(REG_SP);
         return Array.from({ length: len }, (_, i) => {
-            const base = i * SHADOW_STACK_ENT_SIZE;
-            let frameSp = raw[base + SHADOW_STACK_SP];
+            let frameSp = this.wasm.getShadowStackSp(i);
             // augment shadow stack with per-position info
 
             // for inner frames, the end of one frame is the start of the next
             // but for the last one there is no next, so use the actual SP as the base
             const frameBase =
-                i === len - 1 ?
-                    liveSp
-                    : raw[(i + 1) * SHADOW_STACK_ENT_SIZE + SHADOW_STACK_SP];
+                i === len - 1 ? liveSp : this.wasm.getShadowStackSp(i + 1);
 
             let elemCount = (frameSp - frameBase) / 4;
 
@@ -425,23 +422,22 @@ export class Emulator {
             const elems = Array.from({ length: elemCount }, (_, j) => {
                 const ptr = frameSp - 4 - j * 4;
                 let text = convertNumber(this.load(ptr, 4), true);
-                if (this.wasm.callsanWrittenBy) {
-                    const off = (ptr - (STACK_TOP - STACK_LEN)) / 4;
-                    const regIdx = this.wasm.callsanWrittenBy[off];
-                    if (regIdx === 0xff) text = "??";
-                    else if (regIdx !== 0)
-                        text += ` (${this.wasm.getRegisterName(regIdx)})`;
-                }
+                const off = (ptr - (STACK_TOP - STACK_LEN)) / 4;
+                const regIdx = this.wasm.getCallsanWrittenBy(off);
+                if (regIdx === 0xff) text = "??";
+                else if (regIdx !== 0)
+                    text += ` (${this.wasm.getRegisterName(regIdx)})`;
                 return { addr: ptr, text };
             });
+
+            const args = [];
+            for (let j = 0; j < 8; j++) {
+                args.push(this.wasm.getShadowStackArgs(i, j));
+            }
+
             return {
-                name: this.wasm.getStringFromPc(raw[base + SHADOW_STACK_PC]),
-                args: [
-                    ...raw.slice(
-                        base + SHADOW_STACK_ARGS,
-                        base + SHADOW_STACK_ARGS + SHADOW_STACK_ARG_COUNT,
-                    ),
-                ],
+                name: this.wasm.getStringFromPc(this.wasm.getShadowStackPc(i)),
+                args: args,
                 sp: frameSp,
                 elems,
             };

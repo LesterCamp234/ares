@@ -35,7 +35,7 @@ static inline void shadowstack_pop() {}
 #include <stdlib.h>
 #include <string.h>
 
-#define emu_exit() g_exited = true
+#define emu_exit() g->exited = true
 #endif
 
 // end is inclusive, like in Verilog
@@ -149,9 +149,13 @@ typedef struct LabelData {
     Section *section;
 } LabelData, *LabelDataPtr;
 
-typedef const char *DeferredInsnCb(Parser *p, const char *opcode,
+struct AresState;
+typedef struct AresState AresState;
+
+typedef const char *DeferredInsnCb(AresState *g, Parser *p, const char *opcode,
                                    size_t opcode_len);
-typedef const char *DeferredInsnReloc(const char *sym, size_t sym_len);
+typedef const char *DeferredInsnReloc(AresState *g, const char *sym,
+                                      size_t sym_len);
 
 typedef struct DeferredInsn {
     Parser p;
@@ -195,36 +199,24 @@ ARES_ARRAY_TYPE(DeferredInsn);
 ARES_ARRAY_TYPE(char);
 ARES_ARRAY_TYPE(LocalLabel);
 
-extern export Section *g_text;
-extern export Section *g_data;
-extern export Section *g_stack;
-extern export Section *g_kernel_data;
-extern export Section *g_kernel_text;
-extern export Section *g_mmio;
-
-extern ARES_ARRAY(SectionPtr) g_sections;
-extern ARES_ARRAY(LabelData) g_labels;
-extern ARES_ARRAY(Global) g_globals;
-extern ARES_ARRAY(LocalLabel) g_local_labels;
-extern ARES_ARRAY(Extern) g_externs;
-
-extern export u32 g_error_line;
-extern export const char *g_error;
-
 extern const char *const REGISTER_NAMES[];
 extern const char *const CSR_NAMES[];
 
-void assemble(const char *str, size_t len, bool allow_externs);
-void emulate();
-bool resolve_symbol(const char *sym, size_t sym_len, bool global, u32 *addr,
-                    Section **sec);
-void prepare_runtime_sections();
-void prepare_aux_sections();
-void free_runtime();
-u32 LOAD(u32 addr, int size, bool *err);
-bool pc_to_label_r(u32 pc, LabelData **ret, u32 *off);
+struct AresState;
+typedef struct AresState AresState;
 
-enum Reg {
+void assemble(AresState *g, const char *str, size_t len, bool allow_externs);
+void emulate(AresState *g);
+bool resolve_symbol(AresState *g, const char *sym, size_t sym_len, bool global,
+                    u32 *addr, Section **sec);
+void prepare_runtime_sections(AresState *g);
+void prepare_aux_sections(AresState *g);
+void free_runtime(AresState *g);
+u32 LOAD(AresState *g, u32 addr, int size, bool *err);
+bool pc_to_label_r(AresState *g, u32 pc, LabelData **ret, u32 *off);
+void get_addr_from_line_r(AresState *g, u32 line, u32 *start, u32 *end);
+
+typedef enum Reg {
     REG_ZERO = 0,
     REG_RA,
     REG_SP,
@@ -257,7 +249,7 @@ enum Reg {
     REG_T4,
     REG_T5,
     REG_T6
-};
+} Reg;
 
 // -- functions exposed here mainly for testing purposes
 bool parse_numeric(Parser *p, i32 *out);

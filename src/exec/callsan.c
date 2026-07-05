@@ -3,46 +3,40 @@
 #include "ares/core.h"
 #include "ares/emulate.h"
 
-export u32 g_reg_bitmap;
-export u32 g_reg_bitmap_ever_written;
-ARES_ARRAY(ShadowStackEnt) g_shadow_stack = ARES_ARRAY_NEW(ShadowStackEnt);
-export u8 g_callsan_stack_written_by[STACK_LEN / 4];
-bool g_callsan_on = false;
-
-void callsan_init(void) {
-    g_callsan_on = true;
-    memset(g_callsan_stack_written_by, 0xFF,
-           sizeof(g_callsan_stack_written_by));
-    g_reg_bitmap = (1ul << REG_ZERO) | (1ul << REG_SP) | (1ul << REG_TP) |
-                   (1ul << REG_GP) | (1u << REG_FP) | (1u << REG_S1) |
-                   (1u << REG_S2) | (1u << REG_S3) | (1u << REG_S4) |
-                   (1u << REG_S5) | (1u << REG_S6) | (1u << REG_S7) |
-                   (1u << REG_S8) | (1u << REG_S9) | (1u << REG_S10) |
-                   (1u << REG_S11);
-    g_shadow_stack = ARES_ARRAY_NEW(ShadowStackEnt);
-    g_reg_bitmap_ever_written = 0;
+void callsan_init(AresState *g) {
+    g->callsan_on = true;
+    memset(g->callsan_stack_written_by, 0xFF,
+           sizeof(g->callsan_stack_written_by));
+    g->reg_bitmap = (1ul << REG_ZERO) | (1ul << REG_SP) | (1ul << REG_TP) |
+                    (1ul << REG_GP) | (1u << REG_FP) | (1u << REG_S1) |
+                    (1u << REG_S2) | (1u << REG_S3) | (1u << REG_S4) |
+                    (1u << REG_S5) | (1u << REG_S6) | (1u << REG_S7) |
+                    (1u << REG_S8) | (1u << REG_S9) | (1u << REG_S10) |
+                    (1u << REG_S11);
+    g->shadow_stack = ARES_ARRAY_NEW(ShadowStackEnt);
+    g->reg_bitmap_ever_written = 0;
 }
 
-bool callsan_can_load(int reg) {
-    if (!g_callsan_on) return true;
+bool callsan_can_load(AresState *g, int reg) {
+    if (!g->callsan_on) return true;
     if (reg == 0) return true;
-    if (((g_reg_bitmap >> reg) & 1) == 0) {
+    if (((g->reg_bitmap >> reg) & 1) == 0) {
         // there are still two causes:
         // it could be caused by accessing an uninitialized register (*never*
         // written) or by a register clobbered by the call
-        g_runtime_error_params[0] = reg;
-        if (((g_reg_bitmap_ever_written >> reg) & 1) == 0)
-            g_runtime_error_type = ERROR_CALLSAN_CANTREAD;
-        else g_runtime_error_type = ERROR_CALLSAN_CALL_CLOBBERED;
+        g->runtime_error_params[0] = reg;
+        if (((g->reg_bitmap_ever_written >> reg) & 1) == 0)
+            g->runtime_error_type = ERROR_CALLSAN_CANTREAD;
+        else g->runtime_error_type = ERROR_CALLSAN_CALL_CLOBBERED;
         return false;
     }
     return true;
 }
 
-void callsan_store(int reg) {
-    if (!g_callsan_on) return;
-    g_reg_bitmap |= 1u << reg;
-    g_reg_bitmap_ever_written |= 1u << reg;
+void callsan_store(AresState *g, int reg) {
+    if (!g->callsan_on) return;
+    g->reg_bitmap |= 1u << reg;
+    g->reg_bitmap_ever_written |= 1u << reg;
 }
 
 const u32 CALLSAN_CALL_ACCESSIBLE =
@@ -62,88 +56,88 @@ const u32 CALLSAN_CALL_CLOBBERED =
     (1u << REG_A3) | (1u << REG_A4) | (1u << REG_A5) | (1u << REG_A6) |
     (1u << REG_A7);
 
-void callsan_call(void) {
-    if (!g_callsan_on) return;
-    ShadowStackEnt *e = ARES_ARRAY_PUSH(&g_shadow_stack);
-    e->sregs[0] = g_regs[REG_FP];
-    e->sregs[1] = g_regs[REG_S1];
+void callsan_call(AresState *g) {
+    if (!g->callsan_on) return;
+    ShadowStackEnt *e = ARES_ARRAY_PUSH(&g->shadow_stack);
+    e->sregs[0] = g->regs[REG_FP];
+    e->sregs[1] = g->regs[REG_S1];
     for (int i = REG_S2; i <= REG_S11; i++)
-        e->sregs[2 + i - REG_S2] = g_regs[i];
-    for (int i = REG_A0; i <= REG_A7; i++) e->args[i - REG_A0] = g_regs[i];
-    e->sp = g_regs[REG_SP];
-    e->pc = g_pc;
-    e->ra = g_regs[REG_RA];
-    e->reg_bitmap = g_reg_bitmap;
+        e->sregs[2 + i - REG_S2] = g->regs[i];
+    for (int i = REG_A0; i <= REG_A7; i++) e->args[i - REG_A0] = g->regs[i];
+    e->sp = g->regs[REG_SP];
+    e->pc = g->pc;
+    e->ra = g->regs[REG_RA];
+    e->reg_bitmap = g->reg_bitmap;
     // only call accessible registers can be read after the call
     // &= and not = because they still must have been written to before
-    g_reg_bitmap &= CALLSAN_CALL_ACCESSIBLE;
+    g->reg_bitmap &= CALLSAN_CALL_ACCESSIBLE;
 }
 
-bool callsan_ret(void) {
-    if (!g_callsan_on) return true;
-    if (ARES_ARRAY_LEN(&g_shadow_stack) == 0) {
-        g_runtime_error_type = ERROR_CALLSAN_RET_EMPTY;
+bool callsan_ret(AresState *g) {
+    if (!g->callsan_on) return true;
+    if (ARES_ARRAY_LEN(&g->shadow_stack) == 0) {
+        g->runtime_error_type = ERROR_CALLSAN_RET_EMPTY;
         return false;
     }
 
-    ShadowStackEnt *e = ARES_ARRAY_POP(&g_shadow_stack);
+    ShadowStackEnt *e = ARES_ARRAY_POP(&g->shadow_stack);
 
-    if (g_regs[REG_SP] != e->sp) {
-        g_runtime_error_type = ERROR_CALLSAN_SP_MISMATCH;
-        g_runtime_error_params[1] = e->sp;
+    if (g->regs[REG_SP] != e->sp) {
+        g->runtime_error_type = ERROR_CALLSAN_SP_MISMATCH;
+        g->runtime_error_params[1] = e->sp;
         return false;
     }
 
-    if (g_regs[REG_RA] != e->ra) {
-        g_runtime_error_type = ERROR_CALLSAN_RA_MISMATCH;
-        g_runtime_error_params[1] = e->ra;
+    if (g->regs[REG_RA] != e->ra) {
+        g->runtime_error_type = ERROR_CALLSAN_RA_MISMATCH;
+        g->runtime_error_params[1] = e->ra;
         return false;
     }
 
     u32 sregs[12];
-    sregs[0] = g_regs[REG_FP];
-    sregs[1] = g_regs[REG_S1];
-    for (int i = 0; i < 10; i++) sregs[2 + i] = g_regs[18 + i];
+    sregs[0] = g->regs[REG_FP];
+    sregs[1] = g->regs[REG_S1];
+    for (int i = 0; i < 10; i++) sregs[2 + i] = g->regs[18 + i];
     for (int i = 0; i < 12; i++) {
         if (sregs[i] != e->sregs[i]) {
-            g_runtime_error_type = ERROR_CALLSAN_NOT_SAVED;
-            if (i == 0) g_runtime_error_params[0] = REG_FP;
-            else if (i == 1) g_runtime_error_params[0] = REG_S1;
-            else g_runtime_error_params[0] = REG_S2 + (i - 2);
-            g_runtime_error_params[1] = e->sregs[i];
+            g->runtime_error_type = ERROR_CALLSAN_NOT_SAVED;
+            if (i == 0) g->runtime_error_params[0] = REG_FP;
+            else if (i == 1) g->runtime_error_params[0] = REG_S1;
+            else g->runtime_error_params[0] = REG_S2 + (i - 2);
+            g->runtime_error_params[1] = e->sregs[i];
             return false;
         }
     }
 
     // after a function return you cannot read the A (except A0 and A1) and T
     // registers since the function hypothetically may have clobbered them
-    u32 a0_a1_set = g_reg_bitmap & ((1ul << REG_A0) | (1ul << REG_A1));
-    g_reg_bitmap = (e->reg_bitmap & ~CALLSAN_CALL_CLOBBERED) | a0_a1_set;
+    u32 a0_a1_set = g->reg_bitmap & ((1ul << REG_A0) | (1ul << REG_A1));
+    g->reg_bitmap = (e->reg_bitmap & ~CALLSAN_CALL_CLOBBERED) | a0_a1_set;
 
     // rest of the stack is all poisoned
     u32 endidx = (e->sp - (STACK_TOP - STACK_LEN)) / 4;
-    for (u32 i = 0; i < endidx; i++) g_callsan_stack_written_by[i] = -1;
+    for (u32 i = 0; i < endidx; i++) g->callsan_stack_written_by[i] = -1;
     return true;
 }
 
-void callsan_report_store(u32 addr, u32 size, int reg) {
-    if (!g_callsan_on) return;
+void callsan_report_store(AresState *g, u32 addr, u32 size, int reg) {
+    if (!g->callsan_on) return;
     bool in_stack = addr >= STACK_TOP - STACK_LEN && addr + size <= STACK_TOP;
     if (!in_stack) return;
     u32 off = addr - (STACK_TOP - STACK_LEN);
     u32 startidx = off / 4;
     u32 endidx = (off + size - 1) / 4;
-    g_callsan_stack_written_by[startidx] = reg;
-    if (endidx != startidx) g_callsan_stack_written_by[endidx] = reg;
+    g->callsan_stack_written_by[startidx] = reg;
+    if (endidx != startidx) g->callsan_stack_written_by[endidx] = reg;
 }
 
-bool callsan_check_load(u32 addr, u32 size) {
-    if (!g_callsan_on) return true;
+bool callsan_check_load(AresState *g, u32 addr, u32 size) {
+    if (!g->callsan_on) return true;
     bool in_stack = addr >= STACK_TOP - STACK_LEN && addr + size <= STACK_TOP;
     if (!in_stack) return true;
     u32 off = addr - (STACK_TOP - STACK_LEN);
     u32 startidx = off / 4;
     u32 endidx = (off + size - 1) / 4;
-    return g_callsan_stack_written_by[startidx] != 0xFF &&
-           g_callsan_stack_written_by[endidx] != 0xFF;
+    return g->callsan_stack_written_by[startidx] != 0xFF &&
+           g->callsan_stack_written_by[endidx] != 0xFF;
 }

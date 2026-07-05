@@ -7,35 +7,6 @@
 #include "ares/elf.h"
 #include "ares/emulate.h"
 
-export Section *g_text, *g_data, *g_stack, *g_kernel_text, *g_kernel_data,
-    *g_mmio;
-
-typedef struct PcrelHiReloc {
-    u32 label_addr;
-    u32 dest_addr;
-} PcrelHiReloc;
-ARES_ARRAY_TYPE(PcrelHiReloc);
-
-ARES_ARRAY(SectionPtr) g_sections = ARES_ARRAY_NEW(SectionPtr);
-ARES_ARRAY(Extern) g_externs = ARES_ARRAY_NEW(Extern);
-ARES_ARRAY(LabelData) g_labels = ARES_ARRAY_NEW(LabelData);
-ARES_ARRAY(Global) g_globals = ARES_ARRAY_NEW(Global);
-ARES_ARRAY(LocalLabel) g_local_labels = ARES_ARRAY_NEW(LocalLabel);
-ARES_ARRAY(PcrelHiReloc) g_pcrel_hi_relocs = ARES_ARRAY_NEW(PcrelHiReloc);
-
-static ARES_ARRAY(DeferredInsn) g_deferred_insn = ARES_ARRAY_NEW(DeferredInsn);
-
-static Section *g_section;
-
-export bool g_in_fixup;
-export u32 g_error_line;
-export const char *g_error;
-
-export u32 g_runtime_error_params[2];
-export Error g_runtime_error_type;
-
-static bool g_allow_externs;
-
 // NOTE: this may seem like it can be static, but it's used elsewhere (like in
 // cli.c)
 const char *const REGISTER_NAMES[] = {
@@ -586,196 +557,203 @@ int parse_csr(Parser *p) {
     return -1;
 }
 
-void asm_emit_byte(u8 byte, int linenum) {
-    if (!g_in_fixup) {
-        *ARES_ARRAY_PUSH(&g_section->contents) = byte;
-        *ARES_ARRAY_PUSH(&g_section->by_linenum) = linenum;
+void asm_emit_byte(AresState *g, u8 byte, int linenum) {
+    if (!g->in_fixup) {
+        *ARES_ARRAY_PUSH(&g->section->contents) = byte;
+        *ARES_ARRAY_PUSH(&g->section->by_linenum) = linenum;
     } else {
-        *ARES_ARRAY_WRITE_AT(&g_section->contents, g_section->emit_idx) = byte;
+        *ARES_ARRAY_WRITE_AT(&g->section->contents, g->section->emit_idx) =
+            byte;
     }
-    g_section->emit_idx++;
+    g->section->emit_idx++;
 }
 
-void asm_emit(u32 inst, int linenum) {
-    asm_emit_byte(inst >> 0, linenum);
-    asm_emit_byte(inst >> 8, linenum);
-    asm_emit_byte(inst >> 16, linenum);
-    asm_emit_byte(inst >> 24, linenum);
+void asm_emit(AresState *g, u32 inst, int linenum) {
+    asm_emit_byte(g, inst >> 0, linenum);
+    asm_emit_byte(g, inst >> 8, linenum);
+    asm_emit_byte(g, inst >> 16, linenum);
+    asm_emit_byte(g, inst >> 24, linenum);
 }
 
-void asm_emit_16(u32 inst, int linenum) {
-    asm_emit_byte(inst >> 0, linenum);
-    asm_emit_byte(inst >> 8, linenum);
+void asm_emit_16(AresState *g, u32 inst, int linenum) {
+    asm_emit_byte(g, inst >> 0, linenum);
+    asm_emit_byte(g, inst >> 8, linenum);
 }
 
-static Extern *get_extern(const char *sym, size_t sym_len) {
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_externs); i++) {
-        if (ARES_ARRAY_GET(&g_externs, i)->len == sym_len &&
-            0 == memcmp(sym, ARES_ARRAY_GET(&g_externs, i)->symbol, sym_len)) {
-            return ARES_ARRAY_GET(&g_externs, i);
+static Extern *get_extern(AresState *g, const char *sym, size_t sym_len) {
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->externs); i++) {
+        if (ARES_ARRAY_GET(&g->externs, i)->len == sym_len &&
+            0 == memcmp(sym, ARES_ARRAY_GET(&g->externs, i)->symbol, sym_len)) {
+            return ARES_ARRAY_GET(&g->externs, i);
         }
     }
 
-    Extern *e = ARES_ARRAY_PUSH(&g_externs);
+    Extern *e = ARES_ARRAY_PUSH(&g->externs);
     e->symbol = sym;
     e->len = sym_len;
     return e;
 }
 
-const char *reloc_c_j(const char *sym, size_t sym_len) { return NULL; }
+const char *reloc_c_j(AresState *g, const char *sym, size_t sym_len) {
+    return NULL;
+}
 
-const char *reloc_branch(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_branch(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_BRANCH;
     return NULL;
 }
 
-const char *reloc_jal(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_jal(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_JAL;
     return NULL;
 }
 
-const char *reloc_hi20(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_hi20(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
 
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_HI20;
     return NULL;
 }
 
-const char *reloc_lo12i(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_lo12i(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
 
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_LO12_I;
     return NULL;
 }
 
-const char *reloc_lo12s(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_lo12s(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
 
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_LO12_S;
     return NULL;
 }
 
-const char *reloc_hi20lo12i(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_hi20lo12i(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
 
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_HI20;
 
-    r = ARES_ARRAY_PUSH(&g_section->relocations);
+    r = ARES_ARRAY_PUSH(&g->section->relocations);
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx + 4;
+    r->offset = g->section->emit_idx + 4;
     r->type = R_RISCV_LO12_I;
     return NULL;
 }
 
-const char *reloc_hi20lo12s(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_hi20lo12s(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
 
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_HI20;
 
-    r = ARES_ARRAY_PUSH(&g_section->relocations);
+    r = ARES_ARRAY_PUSH(&g->section->relocations);
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx + 4;
+    r->offset = g->section->emit_idx + 4;
     r->type = R_RISCV_LO12_S;
     return NULL;
 }
 
-const char *reloc_abs32(const char *sym, size_t sym_len) {
-    Extern *e = get_extern(sym, sym_len);
-    Relocation *r = ARES_ARRAY_PUSH(&g_section->relocations);
+const char *reloc_abs32(AresState *g, const char *sym, size_t sym_len) {
+    Extern *e = get_extern(g, sym, sym_len);
+    Relocation *r = ARES_ARRAY_PUSH(&g->section->relocations);
 
     r->symbol = e;
     r->addend = 0;
-    r->offset = g_section->emit_idx;
+    r->offset = g->section->emit_idx;
     r->type = R_RISCV_32;
     return NULL;
 }
 
-static const char *reloc_pcrel_hi20lo12i(const char *sym, size_t sym_len) {
-    size_t local_label_idx = ARES_ARRAY_LEN(&g_local_labels);
-    LocalLabel *lbl = ARES_ARRAY_PUSH(&g_local_labels);
-    lbl->section = g_section;
-    lbl->offset = g_section->emit_idx;
+static const char *reloc_pcrel_hi20lo12i(AresState *g, const char *sym,
+                                         size_t sym_len) {
+    size_t local_label_idx = ARES_ARRAY_LEN(&g->local_labels);
+    LocalLabel *lbl = ARES_ARRAY_PUSH(&g->local_labels);
+    lbl->section = g->section;
+    lbl->offset = g->section->emit_idx;
 
-    Relocation *r_hi = ARES_ARRAY_PUSH(&g_section->relocations);
+    Relocation *r_hi = ARES_ARRAY_PUSH(&g->section->relocations);
     r_hi->kind = RELOCATION_KIND_EXTERN;
-    r_hi->symbol = get_extern(sym, sym_len);
+    r_hi->symbol = get_extern(g, sym, sym_len);
     r_hi->addend = 0;
-    r_hi->offset = g_section->emit_idx;
+    r_hi->offset = g->section->emit_idx;
     r_hi->type = R_RISCV_PCREL_HI20;
 
-    Relocation *r_lo = ARES_ARRAY_PUSH(&g_section->relocations);
+    Relocation *r_lo = ARES_ARRAY_PUSH(&g->section->relocations);
     r_lo->kind = RELOCATION_KIND_LOCAL_LABEL;
     r_lo->local_label_idx = local_label_idx;
     r_lo->addend = 0;
-    r_lo->offset = g_section->emit_idx + 4;
+    r_lo->offset = g->section->emit_idx + 4;
     r_lo->type = R_RISCV_PCREL_LO12_I;
 
     return NULL;
 }
 
-static const char *reloc_pcrel_hi20(const char *sym, size_t sym_len) {
-    Relocation *r_hi = ARES_ARRAY_PUSH(&g_section->relocations);
+static const char *reloc_pcrel_hi20(AresState *g, const char *sym,
+                                    size_t sym_len) {
+    Relocation *r_hi = ARES_ARRAY_PUSH(&g->section->relocations);
     r_hi->kind = RELOCATION_KIND_EXTERN;
-    r_hi->symbol = get_extern(sym, sym_len);
+    r_hi->symbol = get_extern(g, sym, sym_len);
     r_hi->addend = 0;
-    r_hi->offset = g_section->emit_idx;
+    r_hi->offset = g->section->emit_idx;
     r_hi->type = R_RISCV_PCREL_HI20;
     return NULL;
 }
 
-static const char *reloc_pcrel_lo12i(const char *sym, size_t sym_len) {
-    Relocation *r_lo = ARES_ARRAY_PUSH(&g_section->relocations);
+static const char *reloc_pcrel_lo12i(AresState *g, const char *sym,
+                                     size_t sym_len) {
+    Relocation *r_lo = ARES_ARRAY_PUSH(&g->section->relocations);
     r_lo->kind = RELOCATION_KIND_EXTERN;
-    r_lo->symbol = get_extern(sym, sym_len);
+    r_lo->symbol = get_extern(g, sym, sym_len);
     r_lo->addend = 0;
-    r_lo->offset = g_section->emit_idx;
+    r_lo->offset = g->section->emit_idx;
     r_lo->type = R_RISCV_PCREL_LO12_I;
     return NULL;
 }
 
-static const char *reloc_pcrel_lo12s(const char *sym, size_t sym_len) {
-    Relocation *r_lo = ARES_ARRAY_PUSH(&g_section->relocations);
+static const char *reloc_pcrel_lo12s(AresState *g, const char *sym,
+                                     size_t sym_len) {
+    Relocation *r_lo = ARES_ARRAY_PUSH(&g->section->relocations);
     r_lo->kind = RELOCATION_KIND_EXTERN;
-    r_lo->symbol = get_extern(sym, sym_len);
+    r_lo->symbol = get_extern(g, sym, sym_len);
     r_lo->addend = 0;
-    r_lo->offset = g_section->emit_idx;
+    r_lo->offset = g->section->emit_idx;
     r_lo->type = R_RISCV_PCREL_LO12_S;
     return NULL;
 }
 
-const char *label(Parser *p, Parser *orig, DeferredInsnCb *cb,
+const char *label(AresState *g, Parser *p, Parser *orig, DeferredInsnCb *cb,
                   const char *opcode, size_t opcode_len, u32 *out_addr,
                   bool *later, DeferredInsnReloc *reloc) {
     *later = false;
@@ -785,50 +763,50 @@ const char *label(Parser *p, Parser *orig, DeferredInsnCb *cb,
     parse_ident(p, &target, &target_len);
     if (target_len == 0) return "No label";
 
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_labels); i++) {
-        if (str_eq_2(ARES_ARRAY_GET(&g_labels, i)->txt,
-                     ARES_ARRAY_GET(&g_labels, i)->len, target, target_len)) {
-            *out_addr = ARES_ARRAY_GET(&g_labels, i)->addr;
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->labels); i++) {
+        if (str_eq_2(ARES_ARRAY_GET(&g->labels, i)->txt,
+                     ARES_ARRAY_GET(&g->labels, i)->len, target, target_len)) {
+            *out_addr = ARES_ARRAY_GET(&g->labels, i)->addr;
             return NULL;
         }
     }
 
-    if (g_in_fixup && (!reloc || !g_allow_externs)) return "Label not found";
-    if (g_in_fixup) {
+    if (g->in_fixup && (!reloc || !g->allow_externs)) return "Label not found";
+    if (g->in_fixup) {
         *out_addr = 0;
-        return reloc(target, target_len);
+        return reloc(g, target, target_len);
     }
-    DeferredInsn *insn = ARES_ARRAY_PUSH(&g_deferred_insn);
-    insn->emit_idx = g_section->emit_idx;
+    DeferredInsn *insn = ARES_ARRAY_PUSH(&g->deferred_insn);
+    insn->emit_idx = g->section->emit_idx;
     insn->p = *orig;
     insn->cb = cb;
     insn->opcode = opcode;
     insn->opcode_len = opcode_len;
-    insn->section = g_section;
+    insn->section = g->section;
     *later = true;
     return NULL;
 }
 
-const char *pc_relative_target(Parser *p, Parser *orig, DeferredInsnCb *cb,
-                               const char *opcode, size_t opcode_len,
-                               u32 *out_addr, bool *later,
+const char *pc_relative_target(AresState *g, Parser *p, Parser *orig,
+                               DeferredInsnCb *cb, const char *opcode,
+                               size_t opcode_len, u32 *out_addr, bool *later,
                                DeferredInsnReloc *reloc) {
     *later = false;
 
     i32 off;
     Parser fallback = *p;
     if (parse_numeric(p, &off)) {
-        *out_addr = (u32)(g_section->emit_idx + g_section->base + off);
+        *out_addr = (u32)(g->section->emit_idx + g->section->base + off);
         return NULL;
     }
     *p = fallback;
 
-    return label(p, orig, cb, opcode, opcode_len, out_addr, later, reloc);
+    return label(g, p, orig, cb, opcode, opcode_len, out_addr, later, reloc);
 }
 
-const char *parse_modifier_hi(Parser *p, Parser orig, DeferredInsnCb *cb,
-                              const char *opcode, size_t opcode_len,
-                              i32 *simm) {
+const char *parse_modifier_hi(AresState *g, Parser *p, Parser orig,
+                              DeferredInsnCb *cb, const char *opcode,
+                              size_t opcode_len, i32 *simm) {
     const char *modifier;
     size_t modifier_len;
     u32 addr;
@@ -846,7 +824,7 @@ const char *parse_modifier_hi(Parser *p, Parser orig, DeferredInsnCb *cb,
     } else {
         bool later;
         const char *err =
-            label(p, &orig, cb, opcode, opcode_len, &addr, &later, reloc);
+            label(g, p, &orig, cb, opcode, opcode_len, &addr, &later, reloc);
         if (err) return err;
         if (later) {
             if (!consume_if(p, ')')) return "Expected )";
@@ -856,10 +834,10 @@ const char *parse_modifier_hi(Parser *p, Parser orig, DeferredInsnCb *cb,
     }
     if (!consume_if(p, ')')) return "Expected )";
     if (reloc == reloc_pcrel_hi20) {
-        *ARES_ARRAY_PUSH(&g_pcrel_hi_relocs) =
-            (PcrelHiReloc){.label_addr = g_section->emit_idx + g_section->base,
-                           .dest_addr = addr};
-        addr -= g_section->emit_idx + g_section->base;
+        *ARES_ARRAY_PUSH(&g->pcrel_hi_relocs) = (PcrelHiReloc){
+            .label_addr = g->section->emit_idx + g->section->base,
+            .dest_addr = addr};
+        addr -= g->section->emit_idx + g->section->base;
     }
     i32 lo = (i32)((u32)addr << 20) >> 20;
     u32 hi = (u32)(addr - lo) >> 12;
@@ -867,7 +845,7 @@ const char *parse_modifier_hi(Parser *p, Parser orig, DeferredInsnCb *cb,
     return NULL;
 }
 
-const char *parse_modifier_lo(Parser *p, Parser orig, bool is_i,
+const char *parse_modifier_lo(AresState *g, Parser *p, Parser orig, bool is_i,
                               DeferredInsnCb *cb, const char *opcode,
                               size_t opcode_len, i32 *simm) {
     const char *modifier;
@@ -888,7 +866,7 @@ const char *parse_modifier_lo(Parser *p, Parser orig, bool is_i,
     } else {
         bool later;
         const char *err =
-            label(p, &orig, cb, opcode, opcode_len, &addr, &later, reloc);
+            label(g, p, &orig, cb, opcode, opcode_len, &addr, &later, reloc);
         if (err) return err;
         if (later) {
             if (!consume_if(p, ')')) return "Expected )";
@@ -899,21 +877,21 @@ const char *parse_modifier_lo(Parser *p, Parser orig, bool is_i,
     if (!consume_if(p, ')')) return "Expected )";
     if (reloc == reloc_pcrel_lo12i || reloc == reloc_pcrel_lo12s) {
         bool found = false;
-        for (size_t i = 0; i < g_pcrel_hi_relocs.len; i++) {
-            if (g_pcrel_hi_relocs.buf[i].label_addr == addr) {
-                addr = g_pcrel_hi_relocs.buf[i].dest_addr - addr;
+        for (size_t i = 0; i < g->pcrel_hi_relocs.len; i++) {
+            if (g->pcrel_hi_relocs.buf[i].label_addr == addr) {
+                addr = g->pcrel_hi_relocs.buf[i].dest_addr - addr;
                 found = true;
             }
         }
         if (!found) {
-            if (!g_in_fixup) {
-                DeferredInsn *insn = ARES_ARRAY_PUSH(&g_deferred_insn);
-                insn->emit_idx = g_section->emit_idx;
+            if (!g->in_fixup) {
+                DeferredInsn *insn = ARES_ARRAY_PUSH(&g->deferred_insn);
+                insn->emit_idx = g->section->emit_idx;
                 insn->p = orig;
                 insn->cb = cb;
                 insn->opcode = opcode;
                 insn->opcode_len = opcode_len;
-                insn->section = g_section;
+                insn->section = g->section;
                 *simm = 0;
                 return NULL;
             } else {
@@ -932,7 +910,8 @@ const char *parse_modifier_lo(Parser *p, Parser orig, bool is_i,
     return NULL;
 }
 
-const char *handle_alu_reg(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_alu_reg(AresState *g, Parser *p, const char *opcode,
+                           size_t opcode_len) {
     int d, s1, s2;
 
     skip_trailing(p);
@@ -969,11 +948,12 @@ const char *handle_alu_reg(Parser *p, const char *opcode, size_t opcode_len) {
     else if (str_eq_case(opcode, opcode_len, "rem")) inst = REM(d, s1, s2);
     else if (str_eq_case(opcode, opcode_len, "remu")) inst = REMU(d, s1, s2);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
     return NULL;
 }
 
-const char *handle_ext(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_ext(AresState *g, Parser *p, const char *opcode,
+                       size_t opcode_len) {
     int d, s1;
 
     skip_trailing(p);
@@ -986,22 +966,23 @@ const char *handle_ext(Parser *p, const char *opcode, size_t opcode_len) {
     skip_trailing(p);
 
     if (str_eq_case(opcode, opcode_len, "zext.b")) {
-        asm_emit(ANDI(d, s1, 255), p->startline);
+        asm_emit(g, ANDI(d, s1, 255), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "zext.h")) {
-        asm_emit(SLLI(d, s1, 16), p->startline);
-        asm_emit(SRLI(d, d, 16), p->startline);
+        asm_emit(g, SLLI(d, s1, 16), p->startline);
+        asm_emit(g, SRLI(d, d, 16), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "sext.b")) {
-        asm_emit(SLLI(d, s1, 24), p->startline);
-        asm_emit(SRAI(d, d, 24), p->startline);
+        asm_emit(g, SLLI(d, s1, 24), p->startline);
+        asm_emit(g, SRAI(d, d, 24), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "sext.h")) {
-        asm_emit(SLLI(d, s1, 16), p->startline);
-        asm_emit(SRAI(d, d, 16), p->startline);
+        asm_emit(g, SLLI(d, s1, 16), p->startline);
+        asm_emit(g, SRAI(d, d, 16), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_alu_imm(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_alu_imm(AresState *g, Parser *p, const char *opcode,
+                           size_t opcode_len) {
     Parser orig = *p;
     int d, s1;
     i32 simm;
@@ -1018,7 +999,7 @@ const char *handle_alu_imm(Parser *p, const char *opcode, size_t opcode_len) {
 
     skip_trailing(p);
     if (consume_if(p, '%')) {
-        const char *err = parse_modifier_lo(p, orig, true, handle_alu_imm,
+        const char *err = parse_modifier_lo(g, p, orig, true, handle_alu_imm,
                                             opcode, opcode_len, &simm);
         if (err) return err;
     } else if (!parse_numeric(p, &simm)) return "Invalid immediate";
@@ -1039,12 +1020,13 @@ const char *handle_alu_imm(Parser *p, const char *opcode, size_t opcode_len) {
     else if (str_eq_case(opcode, opcode_len, "srli")) inst = SRLI(d, s1, simm);
     else if (str_eq_case(opcode, opcode_len, "srai")) inst = SRAI(d, s1, simm);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
 
     return NULL;
 }
 
-const char *handle_ldst(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_ldst(AresState *g, Parser *p, const char *opcode,
+                        size_t opcode_len) {
     Parser orig = *p;
     int reg, mem;
     i32 simm;
@@ -1061,7 +1043,7 @@ const char *handle_ldst(Parser *p, const char *opcode, size_t opcode_len) {
     skip_trailing(p);
 
     if (consume_if(p, '%')) {
-        const char *err = parse_modifier_lo(p, orig, !store, handle_ldst,
+        const char *err = parse_modifier_lo(g, p, orig, !store, handle_ldst,
                                             opcode, opcode_len, &simm);
         if (err) return err;
     } else if (!parse_numeric(p, &simm)) return "Invalid immediate";
@@ -1084,7 +1066,7 @@ const char *handle_ldst(Parser *p, const char *opcode, size_t opcode_len) {
     else if (str_eq_case(opcode, opcode_len, "sh")) inst = SH(reg, mem, simm);
     else if (str_eq_case(opcode, opcode_len, "sw")) inst = SW(reg, mem, simm);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
     return NULL;
 }
 
@@ -1103,7 +1085,8 @@ static u32 branch_inst(const char *opcode, size_t opcode_len, int s1, int s2,
     return 0;
 }
 
-const char *handle_branch(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_branch(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Parser orig = *p;
     u32 addr;
     int s1, s2;
@@ -1121,19 +1104,19 @@ const char *handle_branch(Parser *p, const char *opcode, size_t opcode_len) {
 
     skip_trailing(p);
     const char *err =
-        pc_relative_target(p, &orig, handle_branch, opcode, opcode_len, &addr,
-                           &later, reloc_branch);
+        pc_relative_target(g, p, &orig, handle_branch, opcode, opcode_len,
+                           &addr, &later, reloc_branch);
     if (err) return err;
     if (later) {
-        asm_emit(0, p->startline);
+        asm_emit(g, 0, p->startline);
         return NULL;
     }
-    i32 simm = addr - (g_section->emit_idx + g_section->base);
+    i32 simm = addr - (g->section->emit_idx + g->section->base);
     if (simm >= (1 << 12) || simm < -(1 << 12))
         return "Branch immediate too large";
     if (simm & 1) return "Branch target must be even";
 
-    asm_emit(branch_inst(opcode, opcode_len, s1, s2, simm), p->startline);
+    asm_emit(g, branch_inst(opcode, opcode_len, s1, s2, simm), p->startline);
     return NULL;
 }
 
@@ -1148,7 +1131,7 @@ static u32 branch_zero_inst(const char *opcode, size_t opcode_len, int s,
     return 0;
 }
 
-const char *handle_branch_zero(Parser *p, const char *opcode,
+const char *handle_branch_zero(AresState *g, Parser *p, const char *opcode,
                                size_t opcode_len) {
     Parser orig = *p;
     u32 addr;
@@ -1162,23 +1145,23 @@ const char *handle_branch_zero(Parser *p, const char *opcode,
 
     skip_trailing(p);
     const char *err =
-        pc_relative_target(p, &orig, handle_branch_zero, opcode, opcode_len,
+        pc_relative_target(g, p, &orig, handle_branch_zero, opcode, opcode_len,
                            &addr, &later, reloc_branch);
     if (err) return err;
     if (later) {
-        asm_emit(0, p->startline);
+        asm_emit(g, 0, p->startline);
         return NULL;
     }
-    i32 simm = addr - (g_section->emit_idx + g_section->base);
+    i32 simm = addr - (g->section->emit_idx + g->section->base);
     if (simm >= (1 << 12) || simm < -(1 << 12))
         return "Branch immediate too large";
     if (simm & 1) return "Branch target must be even";
 
-    asm_emit(branch_zero_inst(opcode, opcode_len, s, simm), p->startline);
+    asm_emit(g, branch_zero_inst(opcode, opcode_len, s, simm), p->startline);
     return NULL;
 }
 
-const char *handle_alu_pseudo(Parser *p, const char *opcode,
+const char *handle_alu_pseudo(AresState *g, Parser *p, const char *opcode,
                               size_t opcode_len) {
     int d, s;
 
@@ -1199,11 +1182,12 @@ const char *handle_alu_pseudo(Parser *p, const char *opcode,
     else if (str_eq_case(opcode, opcode_len, "sltz")) inst = SLT(d, s, 0);
     else if (str_eq_case(opcode, opcode_len, "sgtz")) inst = SLT(d, 0, s);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
     return NULL;
 }
 
-const char *handle_jump(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_jump(AresState *g, Parser *p, const char *opcode,
+                        size_t opcode_len) {
     int d;
     Parser orig = *p;
     const char *err = NULL;
@@ -1228,22 +1212,23 @@ const char *handle_jump(Parser *p, const char *opcode, size_t opcode_len) {
     skip_trailing(p);
 
     u32 addr;
-    err = pc_relative_target(p, &orig, handle_jump, opcode, opcode_len, &addr,
-                             &later, reloc_jal);
+    err = pc_relative_target(g, p, &orig, handle_jump, opcode, opcode_len,
+                             &addr, &later, reloc_jal);
     if (err) return err;
     if (later) {
-        asm_emit(0, p->startline);
+        asm_emit(g, 0, p->startline);
         return NULL;
     }
-    i32 simm = addr - (g_section->emit_idx + g_section->base);
+    i32 simm = addr - (g->section->emit_idx + g->section->base);
     if (simm >= (1 << 20) || simm < -(1 << 20))
         return "Jump immediate too large";
     if (simm & 1) return "Jump target must be even";
-    asm_emit(JAL(d, simm), p->startline);
+    asm_emit(g, JAL(d, simm), p->startline);
     return NULL;
 }
 
-const char *handle_jump_reg(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_jump_reg(AresState *g, Parser *p, const char *opcode,
+                            size_t opcode_len) {
     int d, s;
     i32 simm;
 
@@ -1256,7 +1241,7 @@ const char *handle_jump_reg(Parser *p, const char *opcode, size_t opcode_len) {
         if ((d = parse_reg(p)) == -1) return "Invalid register";
         skip_trailing(p);
         if (!consume_if(p, ',')) {
-            asm_emit(JALR(1, d, 0), p->startline);
+            asm_emit(g, JALR(1, d, 0), p->startline);
             return NULL;
         }
         skip_trailing(p);
@@ -1285,21 +1270,23 @@ const char *handle_jump_reg(Parser *p, const char *opcode, size_t opcode_len) {
             return "Invalid operand";
         }
         if (simm >= -2048 && simm <= 2047)
-            asm_emit(JALR(d, s, simm), p->startline);
+            asm_emit(g, JALR(d, s, simm), p->startline);
         else return "Immediate out of range";
     } else if (str_eq_case(opcode, opcode_len, "jr")) {
         if ((s = parse_reg(p)) == -1) return "Invalid rs";
-        asm_emit(JALR(0, s, 0), p->startline);
+        asm_emit(g, JALR(0, s, 0), p->startline);
     }
     return NULL;
 }
 
-const char *handle_ret(Parser *p, const char *opcode, size_t opcode_len) {
-    asm_emit(JALR(0, 1, 0), p->startline);
+const char *handle_ret(AresState *g, Parser *p, const char *opcode,
+                       size_t opcode_len) {
+    asm_emit(g, JALR(0, 1, 0), p->startline);
     return NULL;
 }
 
-const char *handle_upper(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_upper(AresState *g, Parser *p, const char *opcode,
+                         size_t opcode_len) {
     Parser orig = *p;
     int d;
     i32 simm;
@@ -1311,8 +1298,8 @@ const char *handle_upper(Parser *p, const char *opcode, size_t opcode_len) {
     if (!consume_if(p, ',')) return "Expected ,";
     skip_trailing(p);
     if (consume_if(p, '%')) {
-        const char *err =
-            parse_modifier_hi(p, orig, handle_upper, opcode, opcode_len, &simm);
+        const char *err = parse_modifier_hi(g, p, orig, handle_upper, opcode,
+                                            opcode_len, &simm);
         if (err) return err;
     } else if (!parse_numeric(p, &simm)) return "Invalid immediate";
     // the immediate can either be signed or unsigned 20 bit
@@ -1321,11 +1308,12 @@ const char *handle_upper(Parser *p, const char *opcode, size_t opcode_len) {
     if (str_eq_case(opcode, opcode_len, "lui")) inst = LUI(d, simm);
     else if (str_eq_case(opcode, opcode_len, "auipc")) inst = AUIPC(d, simm);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
     return NULL;
 }
 
-const char *handle_li(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_li(AresState *g, Parser *p, const char *opcode,
+                      size_t opcode_len) {
     int d;
     i32 simm;
 
@@ -1337,18 +1325,19 @@ const char *handle_li(Parser *p, const char *opcode, size_t opcode_len) {
     if (!parse_numeric(p, &simm)) return "Invalid immediate";
 
     if (simm >= -2048 && simm <= 2047) {
-        asm_emit(ADDI(d, 0, simm), p->startline);
+        asm_emit(g, ADDI(d, 0, simm), p->startline);
     } else {
         u32 lo = simm & 0xFFF;
         if (lo >= 0x800) lo -= 0x1000;
         u32 hi = (u32)(simm - lo) >> 12;
-        asm_emit(LUI(d, hi), p->startline);
-        if (lo != 0) asm_emit(ADDI(d, d, lo), p->startline);
+        asm_emit(g, LUI(d, hi), p->startline);
+        if (lo != 0) asm_emit(g, ADDI(d, d, lo), p->startline);
     }
     return NULL;
 }
 
-const char *handle_la(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_la(AresState *g, Parser *p, const char *opcode,
+                      size_t opcode_len) {
     Parser orig = *p;
     int d;
     skip_trailing(p);
@@ -1359,46 +1348,51 @@ const char *handle_la(Parser *p, const char *opcode, size_t opcode_len) {
 
     u32 addr;
     bool later;
-    const char *err = label(p, &orig, handle_la, opcode, opcode_len, &addr,
+    const char *err = label(g, p, &orig, handle_la, opcode, opcode_len, &addr,
                             &later, reloc_pcrel_hi20lo12i);
     if (later) {
-        asm_emit(0, p->startline);
-        asm_emit(0, p->startline);
+        asm_emit(g, 0, p->startline);
+        asm_emit(g, 0, p->startline);
         return NULL;
     }
     if (err) return err;
-    i32 pc = (i32)(g_section->emit_idx + g_section->base);
+    i32 pc = (i32)(g->section->emit_idx + g->section->base);
     i32 simm = (i32)addr - pc;
 
     i32 lo = (i32)((u32)simm << 20) >> 20;
     u32 hi = (u32)(simm - lo) >> 12;
 
-    asm_emit(AUIPC(d, hi), p->startline);
-    asm_emit(ADDI(d, d, lo), p->startline);
+    asm_emit(g, AUIPC(d, hi), p->startline);
+    asm_emit(g, ADDI(d, d, lo), p->startline);
     return NULL;
 }
 
-const char *handle_ecall(Parser *p, const char *opcode, size_t opcode_len) {
-    asm_emit(0x73, p->startline);
+const char *handle_ecall(AresState *g, Parser *p, const char *opcode,
+                         size_t opcode_len) {
+    asm_emit(g, 0x73, p->startline);
     return NULL;
 }
 
-const char *handle_ebreak(Parser *p, const char *opcode, size_t opcode_len) {
-    asm_emit(0x00100073, p->startline);
+const char *handle_ebreak(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
+    asm_emit(g, 0x00100073, p->startline);
     return NULL;
 }
 
-const char *handle_nop(Parser *p, const char *opcode, size_t opcode_len) {
-    asm_emit(ADDI(0, 0, 0), p->startline);
+const char *handle_nop(AresState *g, Parser *p, const char *opcode,
+                       size_t opcode_len) {
+    asm_emit(g, ADDI(0, 0, 0), p->startline);
     return NULL;
 }
 
-const char *handle_sret(Parser *p, const char *opcode, size_t opcode_len) {
-    asm_emit(0x10200073, p->startline);
+const char *handle_sret(AresState *g, Parser *p, const char *opcode,
+                        size_t opcode_len) {
+    asm_emit(g, 0x10200073, p->startline);
     return NULL;
 }
 
-const char *handle_csr(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_csr(AresState *g, Parser *p, const char *opcode,
+                       size_t opcode_len) {
     int csr, d, s;
 
     skip_trailing(p);
@@ -1421,11 +1415,12 @@ const char *handle_csr(Parser *p, const char *opcode, size_t opcode_len) {
     else if (str_eq_case(opcode, opcode_len, "csrrs")) inst = CSRRS(d, s, csr);
     else if (str_eq_case(opcode, opcode_len, "csrrc")) inst = CSRRC(d, s, csr);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
     return NULL;
 }
 
-const char *handle_csr_imm(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_csr_imm(AresState *g, Parser *p, const char *opcode,
+                           size_t opcode_len) {
     int csr, d;
     i32 zimm;
 
@@ -1451,12 +1446,13 @@ const char *handle_csr_imm(Parser *p, const char *opcode, size_t opcode_len) {
     else if (str_eq_case(opcode, opcode_len, "csrrci"))
         inst = CSRRCI(d, zimm, csr);
 
-    asm_emit(inst, p->startline);
+    asm_emit(g, inst, p->startline);
     return NULL;
 }
 // compressed handlers
 
-const char *handle_c_lwsp(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_lwsp(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Reg d, s;
     i32 simm;
 
@@ -1482,11 +1478,12 @@ const char *handle_c_lwsp(Parser *p, const char *opcode, size_t opcode_len) {
     skip_trailing(p);
     if (!consume_if(p, ')')) return "Expected )";
 
-    asm_emit_16(C_LWSP(d, simm), p->startline);
+    asm_emit_16(g, C_LWSP(d, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_swsp(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_swsp(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Reg s2, s;
     i32 simm;
 
@@ -1511,11 +1508,12 @@ const char *handle_c_swsp(Parser *p, const char *opcode, size_t opcode_len) {
     skip_trailing(p);
     if (!consume_if(p, ')')) return "Expected )";
 
-    asm_emit_16(C_SWSP(s2, simm), p->startline);
+    asm_emit_16(g, C_SWSP(s2, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_lw(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_lw(AresState *g, Parser *p, const char *opcode,
+                        size_t opcode_len) {
     Reg d, s1;
     SmallReg cd, cs1;
     i32 simm;
@@ -1545,11 +1543,12 @@ const char *handle_c_lw(Parser *p, const char *opcode, size_t opcode_len) {
     cd = d - 8;
     cs1 = s1 - 8;
 
-    asm_emit_16(C_LW(cd, cs1, simm), p->startline);
+    asm_emit_16(g, C_LW(cd, cs1, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_sw(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_sw(AresState *g, Parser *p, const char *opcode,
+                        size_t opcode_len) {
     Reg s2, s1;
     SmallReg cs2, cs1;
     i32 simm;
@@ -1579,39 +1578,40 @@ const char *handle_c_sw(Parser *p, const char *opcode, size_t opcode_len) {
     cs2 = s2 - 8;
     cs1 = s1 - 8;
 
-    asm_emit_16(C_SW(cs2, cs1, simm), p->startline);
+    asm_emit_16(g, C_SW(cs2, cs1, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_jump(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_jump(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Parser orig = *p;
     u32 addr;
     bool later;
 
     skip_trailing(p);
-    const char *err = pc_relative_target(p, &orig, handle_c_jump, opcode,
+    const char *err = pc_relative_target(g, p, &orig, handle_c_jump, opcode,
                                          opcode_len, &addr, &later, reloc_c_j);
     if (err) return err;
     if (later) {
-        asm_emit_16(0, p->startline);
+        asm_emit_16(g, 0, p->startline);
         return NULL;
     }
 
-    i32 simm = addr - (g_section->emit_idx + g_section->base);
+    i32 simm = addr - (g->section->emit_idx + g->section->base);
     if (simm >= (1 << 11) || simm < -(1 << 11))
         return "Jump immediate too large";
     if (simm & 1) return "Jump target must be even";
 
     if (str_eq_case(opcode, opcode_len, "c.j")) {
-        asm_emit_16(C_J(simm), p->startline);
+        asm_emit_16(g, C_J(simm), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.jal")) {
-        asm_emit_16(C_JAL(simm), p->startline);
+        asm_emit_16(g, C_JAL(simm), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_c_jump_reg(Parser *p, const char *opcode,
+const char *handle_c_jump_reg(AresState *g, Parser *p, const char *opcode,
                               size_t opcode_len) {
     Reg rs1;
 
@@ -1620,16 +1620,16 @@ const char *handle_c_jump_reg(Parser *p, const char *opcode,
 
     if (str_eq_case(opcode, opcode_len, "c.jr")) {
         if (rs1 == 0) return "rs1 cannot be x0 for c.jr: reserved";
-        asm_emit_16(C_JR(rs1), p->startline);
+        asm_emit_16(g, C_JR(rs1), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.jalr")) {
         if (rs1 == 0) return "c.jalr rd, off(x0) corresponds to c.ebreak";
-        asm_emit_16(C_JALR(rs1), p->startline);
+        asm_emit_16(g, C_JALR(rs1), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_c_branch_zero(Parser *p, const char *opcode,
+const char *handle_c_branch_zero(AresState *g, Parser *p, const char *opcode,
                                  size_t opcode_len) {
     Parser orig = *p;
     u32 addr;
@@ -1646,30 +1646,31 @@ const char *handle_c_branch_zero(Parser *p, const char *opcode,
 
     skip_trailing(p);
     const char *err =
-        pc_relative_target(p, &orig, handle_c_branch_zero, opcode, opcode_len,
-                           &addr, &later, reloc_branch);
+        pc_relative_target(g, p, &orig, handle_c_branch_zero, opcode,
+                           opcode_len, &addr, &later, reloc_branch);
     if (err) return err;
     if (later) {
-        asm_emit_16(0, p->startline);
+        asm_emit_16(g, 0, p->startline);
         return NULL;
     }
 
-    i32 simm = addr - (g_section->emit_idx + g_section->base);
+    i32 simm = addr - (g->section->emit_idx + g->section->base);
     if (simm >= 256 || simm < -256) return "Branch immediate too large";
     if (simm & 1) return "Branch target must be even";
 
     cs1 = s1 - 8;
 
     if (str_eq_case(opcode, opcode_len, "c.beqz")) {
-        asm_emit_16(C_BEQZ(cs1, simm), p->startline);
+        asm_emit_16(g, C_BEQZ(cs1, simm), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.bnez")) {
-        asm_emit_16(C_BNEZ(cs1, simm), p->startline);
+        asm_emit_16(g, C_BNEZ(cs1, simm), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_c_li(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_li(AresState *g, Parser *p, const char *opcode,
+                        size_t opcode_len) {
     Reg d;
     i32 simm;
 
@@ -1684,11 +1685,12 @@ const char *handle_c_li(Parser *p, const char *opcode, size_t opcode_len) {
     if (!parse_numeric(p, &simm)) return "Invalid immediate";
     if (simm < -32 || simm > 31) return "Out of bounds immediate";
 
-    asm_emit_16(C_LI(d, simm), p->startline);
+    asm_emit_16(g, C_LI(d, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_lui(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_lui(AresState *g, Parser *p, const char *opcode,
+                         size_t opcode_len) {
     Reg d;
     i32 simm;
 
@@ -1705,11 +1707,12 @@ const char *handle_c_lui(Parser *p, const char *opcode, size_t opcode_len) {
     if (simm == 0) return "Immediate cannot be 0 for c.lui: reserved ";
     if (d == 2) return "c.lui x2, imm corresponds to c.addi16sp";
 
-    asm_emit_16(C_LUI(d, simm), p->startline);
+    asm_emit_16(g, C_LUI(d, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_addi(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_addi(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Reg d;
     i32 simm;
 
@@ -1727,11 +1730,11 @@ const char *handle_c_addi(Parser *p, const char *opcode, size_t opcode_len) {
         return "rd x0, imm is not a valid instruction: HINT";
     if (simm == 0) return "Immediate cannot be 0 for c.addi: HINT";
 
-    asm_emit_16(C_ADDI(d, simm), p->startline);
+    asm_emit_16(g, C_ADDI(d, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_addi16sp(Parser *p, const char *opcode,
+const char *handle_c_addi16sp(AresState *g, Parser *p, const char *opcode,
                               size_t opcode_len) {
     Reg d;
     i32 simm;
@@ -1749,11 +1752,11 @@ const char *handle_c_addi16sp(Parser *p, const char *opcode,
     if (simm == 0) return "Immediate can't be 0 for c.addi16sp: reserved";
     if (simm % 16 != 0) return "Immediate must be a multiple of 16";
 
-    asm_emit_16(C_ADDI16SP(simm), p->startline);
+    asm_emit_16(g, C_ADDI16SP(simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_addi4spn(Parser *p, const char *opcode,
+const char *handle_c_addi4spn(AresState *g, Parser *p, const char *opcode,
                               size_t opcode_len) {
     Reg d;
     SmallReg cd;
@@ -1774,11 +1777,12 @@ const char *handle_c_addi4spn(Parser *p, const char *opcode,
 
     cd = d - 8;
 
-    asm_emit_16(C_ADDI4SPN(cd, simm), p->startline);
+    asm_emit_16(g, C_ADDI4SPN(cd, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_slli(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_slli(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Reg d;
     i32 simm;
 
@@ -1794,11 +1798,11 @@ const char *handle_c_slli(Parser *p, const char *opcode, size_t opcode_len) {
     if (simm < 0 || simm >= 32) return "Invalid shift immediate";
     if (simm == 0) return "Shift immediate cannot be 0 for c.slli: reserved";
 
-    asm_emit_16(C_SLLI(d, simm), p->startline);
+    asm_emit_16(g, C_SLLI(d, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_shift_right(Parser *p, const char *opcode,
+const char *handle_c_shift_right(AresState *g, Parser *p, const char *opcode,
                                  size_t opcode_len) {
     Reg d;
     SmallReg cd;
@@ -1819,16 +1823,17 @@ const char *handle_c_shift_right(Parser *p, const char *opcode,
 
     if (str_eq_case(opcode, opcode_len, "c.srli")) {
         if (simm == 0) return "shamt can't be 0 for c.srli: HINT";
-        asm_emit_16(C_SRLI(cd, simm), p->startline);
+        asm_emit_16(g, C_SRLI(cd, simm), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.srai")) {
         if (simm == 0) return "shamt can't be 0 for c.srai: HINT";
-        asm_emit_16(C_SRAI(cd, simm), p->startline);
+        asm_emit_16(g, C_SRAI(cd, simm), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_c_andi(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_andi(AresState *g, Parser *p, const char *opcode,
+                          size_t opcode_len) {
     Reg d;
     SmallReg cd;
     i32 simm;
@@ -1846,11 +1851,12 @@ const char *handle_c_andi(Parser *p, const char *opcode, size_t opcode_len) {
 
     cd = d - 8;
 
-    asm_emit_16(C_ANDI(cd, simm), p->startline);
+    asm_emit_16(g, C_ANDI(cd, simm), p->startline);
     return NULL;
 }
 
-const char *handle_c_mv_add(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_mv_add(AresState *g, Parser *p, const char *opcode,
+                            size_t opcode_len) {
     Reg rd, rs2;
 
     skip_trailing(p);
@@ -1865,15 +1871,16 @@ const char *handle_c_mv_add(Parser *p, const char *opcode, size_t opcode_len) {
     if (rs2 == 0) return "rs2 cannot be x0";
 
     if (str_eq_case(opcode, opcode_len, "c.mv")) {
-        asm_emit_16(C_MV(rd, rs2), p->startline);
+        asm_emit_16(g, C_MV(rd, rs2), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.add")) {
-        asm_emit_16(C_ADD(rd, rs2), p->startline);
+        asm_emit_16(g, C_ADD(rd, rs2), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_c_logic(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_logic(AresState *g, Parser *p, const char *opcode,
+                           size_t opcode_len) {
     Reg d, s2;
     SmallReg cd, cs2;
 
@@ -1892,31 +1899,33 @@ const char *handle_c_logic(Parser *p, const char *opcode, size_t opcode_len) {
     cs2 = s2 - 8;
 
     if (str_eq_case(opcode, opcode_len, "c.and")) {
-        asm_emit_16(C_AND(cd, cs2), p->startline);
+        asm_emit_16(g, C_AND(cd, cs2), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.or")) {
-        asm_emit_16(C_OR(cd, cs2), p->startline);
+        asm_emit_16(g, C_OR(cd, cs2), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.xor")) {
-        asm_emit_16(C_XOR(cd, cs2), p->startline);
+        asm_emit_16(g, C_XOR(cd, cs2), p->startline);
     } else if (str_eq_case(opcode, opcode_len, "c.sub")) {
-        asm_emit_16(C_SUB(cd, cs2), p->startline);
+        asm_emit_16(g, C_SUB(cd, cs2), p->startline);
     }
 
     return NULL;
 }
 
-const char *handle_c_nop(Parser *p, const char *opcode, size_t opcode_len) {
+const char *handle_c_nop(AresState *g, Parser *p, const char *opcode,
+                         size_t opcode_len) {
     i32 value = 0;
     if (peek(p) >= '0' && peek(p) <= '9') {
         if (!parse_numeric(p, &value)) {
             return "Invalid nop hint value";
         }
     }
-    asm_emit_16(C_ADDI(0, value), p->startline);
+    asm_emit_16(g, C_ADDI(0, value), p->startline);
     return NULL;
 }
 
-const char *handle_c_ebreak(Parser *p, const char *opcode, size_t opcode_len) {
-    asm_emit_16(C_EBREAK(), p->startline);
+const char *handle_c_ebreak(AresState *g, Parser *p, const char *opcode,
+                            size_t opcode_len) {
+    asm_emit_16(g, C_EBREAK(), p->startline);
     return NULL;
 }
 
@@ -1976,10 +1985,11 @@ OpcodeHandling opcode_types[] = {
 
 // defining _start but not making it global is a VERY common mistake
 // another mistake i've seen is putting _start in .data by accident
-const char *resolve_start(u32 *start_pc) {
+const char *resolve_start(AresState *g, u32 *start_pc) {
     Section *section;
-    if (!resolve_symbol("_start", strlen("_start"), true, start_pc, &section)) {
-        if (resolve_symbol("_start", strlen("_start"), false, start_pc,
+    if (!resolve_symbol(g, "_start", strlen("_start"), true, start_pc,
+                        &section)) {
+        if (resolve_symbol(g, "_start", strlen("_start"), false, start_pc,
                            &section)) {
             return "_start defined, but without .globl";
         }
@@ -1988,17 +1998,17 @@ const char *resolve_start(u32 *start_pc) {
         *start_pc = TEXT_BASE;
         return NULL;
     }
-    if (section != g_text) {
+    if (section != g->text) {
         return "_start not in .text section";
     }
     return NULL;
 }
 
-const char *resolve_kernel_start(u32 *start_pc) {
+const char *resolve_kernel_start(AresState *g, u32 *start_pc) {
     Section *section;
-    if (!resolve_symbol("_kernel_start", strlen("_kernel_start"), true,
+    if (!resolve_symbol(g, "_kernel_start", strlen("_kernel_start"), true,
                         start_pc, &section)) {
-        if (resolve_symbol("_kernel_start", strlen("_kernel_start"), false,
+        if (resolve_symbol(g, "_kernel_start", strlen("_kernel_start"), false,
                            start_pc, &section)) {
             return "_kernel_start defined, but without .globl";
         }
@@ -2006,27 +2016,27 @@ const char *resolve_kernel_start(u32 *start_pc) {
         return "_kernel_start symbol not found";
     }
 
-    if (section != g_kernel_text) {
+    if (section != g->kernel_text) {
         return "_kernel_start not in .kernel_text section";
     }
 
     return NULL;
 }
-const char *resolve_entry(u32 *start_pc) {
-    if (resolve_kernel_start(start_pc) == NULL) {
-        emulator_enter_kernel();
+const char *resolve_entry(AresState *g, u32 *start_pc) {
+    if (resolve_kernel_start(g, start_pc) == NULL) {
+        emulator_enter_kernel(g);
         return NULL;
     }
 
-    return resolve_start(start_pc);
+    return resolve_start(g, start_pc);
 }
 
-static void prepare_default_syms(void) {
-#define MMIO_LABEL(name, addrr)                                    \
-    *ARES_ARRAY_PUSH(&g_labels) = (LabelData){.txt = (name),       \
-                                              .len = strlen(name), \
-                                              .addr = (addrr),     \
-                                              .section = g_mmio}
+static void prepare_default_syms(AresState *g) {
+#define MMIO_LABEL(name, addrr)                                     \
+    *ARES_ARRAY_PUSH(&g->labels) = (LabelData){.txt = (name),       \
+                                               .len = strlen(name), \
+                                               .addr = (addrr),     \
+                                               .section = g->mmio}
 
     MMIO_LABEL("_MMIO_BASE", MMIO_BASE);
     MMIO_LABEL("_MMIO_END", MMIO_END);
@@ -2095,17 +2105,18 @@ static void prepare_default_syms(void) {
 // so, to simplify the deferred instruction code
 // i make so that a word is always filled in the fixup phase
 // where all the label positions are certain
-const char *parse_word(Parser *p, const char *opcode, size_t opcode_len) {
+const char *parse_word(AresState *g, Parser *p, const char *opcode,
+                       size_t opcode_len) {
     Parser orig = *p;
 
-    if (!g_in_fixup) {
-        DeferredInsn *insn = ARES_ARRAY_PUSH(&g_deferred_insn);
-        insn->emit_idx = g_section->emit_idx;
+    if (!g->in_fixup) {
+        DeferredInsn *insn = ARES_ARRAY_PUSH(&g->deferred_insn);
+        insn->emit_idx = g->section->emit_idx;
         insn->p = orig;
         insn->cb = parse_word;
         insn->opcode = opcode;
         insn->opcode_len = opcode_len;
-        insn->section = g_section;
+        insn->section = g->section;
 
         bool first = true;
         while (true) {
@@ -2121,7 +2132,7 @@ const char *parse_word(Parser *p, const char *opcode, size_t opcode_len) {
                 if (!parse_ident(p, &tok, &tok_len) || tok_len == 0)
                     return "Invalid word";
             }
-            asm_emit(0, p->startline);
+            asm_emit(g, 0, p->startline);
         }
         return NULL;
     }
@@ -2135,14 +2146,14 @@ const char *parse_word(Parser *p, const char *opcode, size_t opcode_len) {
 
         i32 value;
         if (parse_numeric(p, &value)) {
-            asm_emit(value, p->startline);
+            asm_emit(g, value, p->startline);
         } else {
             bool later;
             u32 addr = 0;
-            const char *err = label(p, &orig, parse_word, opcode, opcode_len,
+            const char *err = label(g, p, &orig, parse_word, opcode, opcode_len,
                                     &addr, &later, reloc_abs32);
             if (err) return "Invalid word";
-            asm_emit((i32)addr, p->startline);
+            asm_emit(g, (i32)addr, p->startline);
         }
     }
     return NULL;
@@ -2154,77 +2165,79 @@ const char *parse_word(Parser *p, const char *opcode, size_t opcode_len) {
    compatibility we do it too
 */
 
-export void assemble(const char *txt, size_t s, bool allow_externs) {
-    g_allow_externs = allow_externs;
-    g_in_fixup = false;
+export void assemble(AresState *g, const char *txt, size_t s,
+                     bool allow_externs) {
+    memset(g, 0, sizeof(*g));
+    g->allow_externs = allow_externs;
+    g->in_fixup = false;
 
-    callsan_init();
-    emulator_init();
+    callsan_init(g);
+    emulator_init(g);
 
-    g_text = malloc(sizeof(*g_text));
-    ares_panic_if_null(g_text);
-    g_data = malloc(sizeof(*g_data));
-    ares_panic_if_null(g_data);
-    g_kernel_data = malloc(sizeof(*g_kernel_data));
-    ares_panic_if_null(g_kernel_data);
-    g_kernel_text = malloc(sizeof(*g_kernel_text));
-    ares_panic_if_null(g_kernel_text);
+    g->text = malloc(sizeof(*g->text));
+    ares_panic_if_null(g->text);
+    g->data = malloc(sizeof(*g->data));
+    ares_panic_if_null(g->data);
+    g->kernel_data = malloc(sizeof(*g->kernel_data));
+    ares_panic_if_null(g->kernel_data);
+    g->kernel_text = malloc(sizeof(*g->kernel_text));
+    ares_panic_if_null(g->kernel_text);
 
-    *g_text = (Section){.name = ".text",
-                        .base = TEXT_BASE,
-                        .limit = TEXT_END,
-                        .contents = ARES_ARRAY_NEW(u8),
-                        .emit_idx = 0,
-                        .align = 4,
-                        .relocations = ARES_ARRAY_NEW(Relocation),
-                        .read = true,
-                        .write = false,
-                        .execute = true,
-                        .super = false,
-                        .physical = true};
+    *g->text = (Section){.name = ".text",
+                         .base = TEXT_BASE,
+                         .limit = TEXT_END,
+                         .contents = ARES_ARRAY_NEW(u8),
+                         .emit_idx = 0,
+                         .align = 4,
+                         .relocations = ARES_ARRAY_NEW(Relocation),
+                         .read = true,
+                         .write = false,
+                         .execute = true,
+                         .super = false,
+                         .physical = true};
 
-    *g_data = (Section){.name = ".data",
-                        .base = DATA_BASE,
-                        .limit = DATA_END,
-                        .contents = ARES_ARRAY_NEW(u8),
-                        .emit_idx = 0,
-                        .align = 1,
-                        .relocations = ARES_ARRAY_NEW(Relocation),
-                        .read = true,
-                        .write = true,
-                        .execute = false,
-                        .super = false,
-                        .physical = true};
+    *g->data = (Section){.name = ".data",
+                         .base = DATA_BASE,
+                         .limit = DATA_END,
+                         .contents = ARES_ARRAY_NEW(u8),
+                         .emit_idx = 0,
+                         .align = 1,
+                         .relocations = ARES_ARRAY_NEW(Relocation),
+                         .read = true,
+                         .write = true,
+                         .execute = false,
+                         .super = false,
+                         .physical = true};
 
-    *g_kernel_data = (Section){.name = ".kernel_data",
-                               .base = KERNEL_DATA_BASE,
-                               .limit = KERNEL_DATA_END,
-                               .contents = ARES_ARRAY_NEW(u8),
-                               .emit_idx = 0,
-                               .align = 1,
-                               .relocations = ARES_ARRAY_NEW(Relocation),
-                               .read = true,
-                               .write = true,
-                               .execute = false,
-                               .super = true,
-                               .physical = false};
+    *g->kernel_data = (Section){.name = ".kernel_data",
+                                .base = KERNEL_DATA_BASE,
+                                .limit = KERNEL_DATA_END,
+                                .contents = ARES_ARRAY_NEW(u8),
+                                .emit_idx = 0,
+                                .align = 1,
+                                .relocations = ARES_ARRAY_NEW(Relocation),
+                                .read = true,
+                                .write = true,
+                                .execute = false,
+                                .super = true,
+                                .physical = false};
 
-    *g_kernel_text = (Section){.name = ".kernel_text",
-                               .base = KERNEL_TEXT_BASE,
-                               .limit = KERNEL_TEXT_END,
-                               .contents = ARES_ARRAY_NEW(u8),
-                               .emit_idx = 0,
-                               .align = 1,
-                               .relocations = ARES_ARRAY_NEW(Relocation),
-                               .read = true,
-                               .write = false,
-                               .execute = true,
-                               .super = true,
-                               .physical = false};
+    *g->kernel_text = (Section){.name = ".kernel_text",
+                                .base = KERNEL_TEXT_BASE,
+                                .limit = KERNEL_TEXT_END,
+                                .contents = ARES_ARRAY_NEW(u8),
+                                .emit_idx = 0,
+                                .align = 1,
+                                .relocations = ARES_ARRAY_NEW(Relocation),
+                                .read = true,
+                                .write = false,
+                                .execute = true,
+                                .super = true,
+                                .physical = false};
 
-    prepare_runtime_sections();
-    prepare_default_syms();
-    g_section = g_text;
+    prepare_runtime_sections(g);
+    prepare_default_syms(g);
+    g->section = g->text;
 
     Parser parser = {0};
     parser.input = txt;
@@ -2258,22 +2271,22 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                 parse_ident(p, &secname, &secname_len);
                 SectionPtr sec = NULL;
                 // scan already-existing section names
-                for (size_t i = 0; !sec && i < g_sections.len; i++)
-                    if (str_eq(secname, secname_len, g_sections.buf[i]->name))
-                        sec = g_sections.buf[i];
+                for (size_t i = 0; !sec && i < g->sections.len; i++)
+                    if (str_eq(secname, secname_len, g->sections.buf[i]->name))
+                        sec = g->sections.buf[i];
                 if (!sec) {
                     err = "Section not found";
                     break;
                 }
-                g_section = sec;
+                g->section = sec;
                 continue;
             }
 
             if (str_eq_case(directive, directive_len, "data")) {
-                g_section = g_data;
+                g->section = g->data;
                 continue;
             } else if (str_eq_case(directive, directive_len, "text")) {
-                g_section = g_text;
+                g->section = g->text;
                 continue;
             } else if (str_eq_case(directive, directive_len, "globl")) {
                 skip_trailing(p);
@@ -2283,7 +2296,7 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                     err = "Expected identifier after .globl";
                     break;
                 }
-                *ARES_ARRAY_PUSH(&g_globals) =
+                *ARES_ARRAY_PUSH(&g->globals) =
                     (Global){.str = ident, .len = ident_len};
                 continue;
             } else if (str_eq_case(directive, directive_len, "byte")) {
@@ -2301,7 +2314,7 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                             err = "Out of bounds byte";
                             break;
                         }
-                        asm_emit_byte(value, p->startline);
+                        asm_emit_byte(g, value, p->startline);
                     } else break;
                     first = false;
                 }
@@ -2321,14 +2334,14 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                             err = "Out of bounds half";
                             break;
                         }
-                        asm_emit_byte(value, p->startline);
-                        asm_emit_byte(value >> 8, p->startline);
+                        asm_emit_byte(g, value, p->startline);
+                        asm_emit_byte(g, value >> 8, p->startline);
                     } else break;
                     first = false;
                 }
                 continue;
             } else if (str_eq_case(directive, directive_len, "word")) {
-                err = parse_word(p, "word", 4);
+                err = parse_word(g, p, "word", 4);
                 if (err) break;
                 continue;
             } else if (str_eq_case(directive, directive_len, "ascii")) {
@@ -2344,7 +2357,7 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                             break;
                         }
                         for (size_t i = 0; i < out_len; i++)
-                            asm_emit_byte(out[i], p->startline);
+                            asm_emit_byte(g, out[i], p->startline);
                         free(out);
                     } else break;
                     first = false;
@@ -2365,8 +2378,8 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                             break;
                         }
                         for (size_t i = 0; i < out_len; i++)
-                            asm_emit_byte(out[i], p->startline);
-                        asm_emit_byte(0, p->startline);
+                            asm_emit_byte(g, out[i], p->startline);
+                        asm_emit_byte(g, 0, p->startline);
                         free(out);
                     } else break;
                     first = false;
@@ -2389,19 +2402,19 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
         skip_trailing(p);
 
         if (ident_len > 0 && consume_if(p, ':')) {
-            for (size_t i = 0; i < ARES_ARRAY_LEN(&g_labels); i++) {
-                if (str_eq_2(ARES_ARRAY_GET(&g_labels, i)->txt,
-                             ARES_ARRAY_GET(&g_labels, i)->len, ident,
+            for (size_t i = 0; i < ARES_ARRAY_LEN(&g->labels); i++) {
+                if (str_eq_2(ARES_ARRAY_GET(&g->labels, i)->txt,
+                             ARES_ARRAY_GET(&g->labels, i)->len, ident,
                              ident_len)) {
                     err = "Multiple definitions for the same label";
                     break;
                 }
             }
-            u32 addr = g_section->emit_idx + g_section->base;
-            *ARES_ARRAY_PUSH(&g_labels) = (LabelData){.txt = ident,
-                                                      .len = ident_len,
-                                                      .addr = addr,
-                                                      .section = g_section};
+            u32 addr = g->section->emit_idx + g->section->base;
+            *ARES_ARRAY_PUSH(&g->labels) = (LabelData){.txt = ident,
+                                                       .len = ident_len,
+                                                       .addr = addr,
+                                                       .section = g->section};
             continue;
         }
 
@@ -2415,7 +2428,7 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
                 if (str_eq_case(opcode, opcode_len,
                                 opcode_types[i].opcodes[j])) {
                     found = true;
-                    err = opcode_types[i].cb(p, opcode, opcode_len);
+                    err = opcode_types[i].cb(g, p, opcode, opcode_len);
                 }
             }
         }
@@ -2433,37 +2446,37 @@ export void assemble(const char *txt, size_t s, bool allow_externs) {
     }
 
     if (!err) {
-        g_in_fixup = true;
-        for (size_t i = 0; i < ARES_ARRAY_LEN(&g_deferred_insn); i++) {
-            struct DeferredInsn *insn = ARES_ARRAY_GET(&g_deferred_insn, i);
-            g_section = insn->section;
-            g_section->emit_idx = insn->emit_idx;
+        g->in_fixup = true;
+        for (size_t i = 0; i < ARES_ARRAY_LEN(&g->deferred_insn); i++) {
+            struct DeferredInsn *insn = ARES_ARRAY_GET(&g->deferred_insn, i);
+            g->section = insn->section;
+            g->section->emit_idx = insn->emit_idx;
             p = &insn->p;
-            err = insn->cb(&insn->p, insn->opcode, insn->opcode_len);
+            err = insn->cb(g, &insn->p, insn->opcode, insn->opcode_len);
             if (err) break;
         }
     }
 
     if (err) {
-        g_error = err;
-        g_error_line = p->startline;
+        g->error = err;
+        g->error_line = p->startline;
         return;
     }
 
-    err = resolve_entry(&g_pc);
+    err = resolve_entry(g, &g->pc);
     if (err) {
-        g_error = err;
-        g_error_line = 1;
+        g->error = err;
+        g->error_line = 1;
     }
 }
 
-bool pc_to_label_r(u32 pc, LabelData **ret, u32 *off) {
+bool pc_to_label_r(AresState *g, u32 pc, LabelData **ret, u32 *off) {
     LabelData *closest = NULL;
 
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_labels); i++) {
-        if (ARES_ARRAY_GET(&g_labels, i)->addr <= pc &&
-            (!closest || ARES_ARRAY_GET(&g_labels, i)->addr > closest->addr)) {
-            closest = ARES_ARRAY_GET(&g_labels, i);
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->labels); i++) {
+        if (ARES_ARRAY_GET(&g->labels, i)->addr <= pc &&
+            (!closest || ARES_ARRAY_GET(&g->labels, i)->addr > closest->addr)) {
+            closest = ARES_ARRAY_GET(&g->labels, i);
         }
     }
 
@@ -2478,78 +2491,59 @@ bool pc_to_label_r(u32 pc, LabelData **ret, u32 *off) {
     return false;
 }
 
-export u32 g_get_addr_from_line_start;
-export u32 g_get_addr_from_line_end;
-
-void get_addr_from_line(u32 line) {
+void get_addr_from_line_r(AresState *g, u32 line, u32 *start, u32 *end) {
     Section *startsec = NULL;
     size_t j = 0;
 
     // find the section containing the line
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_sections); i++) {
-        startsec = g_sections.buf[i];
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->sections); i++) {
+        startsec = g->sections.buf[i];
         for (j = 0; j < ARES_ARRAY_LEN(&startsec->by_linenum); j++) {
             if (startsec->by_linenum.buf[j] == line) {
-                g_get_addr_from_line_start = startsec->base + j;
+                *start = startsec->base + j;
                 goto found_line;
             }
         }
     }
 
     // line not found in any section
-    g_get_addr_from_line_start = 0;
-    g_get_addr_from_line_end = 0;
+    *start = 0;
+    *end = 0;
     return;
 
 found_line:
     // is there an instruction after this?
     for (; j < ARES_ARRAY_LEN(&startsec->by_linenum); j++) {
         if (startsec->by_linenum.buf[j] > line) {
-            g_get_addr_from_line_end = startsec->base + j;
+            *end = startsec->base + j;
             return;
         }
     }
     // if instead it was the last line, the end is the section end
-    g_get_addr_from_line_end = startsec->base + startsec->contents.len;
+    *end = startsec->base + startsec->contents.len;
 }
 
-u32 get_line_from_pc() {
-    if (g_pc < TEXT_BASE) return 0;
-    size_t idx = g_pc - TEXT_BASE;
-    if (idx >= g_text->by_linenum.len) return 0;
-    return g_text->by_linenum.buf[idx];
+u32 get_line_from_pc(AresState *g) {
+    if (g->pc < TEXT_BASE) return 0;
+    size_t idx = g->pc - TEXT_BASE;
+    if (idx >= g->text->by_linenum.len) return 0;
+    return g->text->by_linenum.buf[idx];
 }
 
-// Ugly because i'm calling it from JS
-// The problem with this is that it's basically the cleanest way to do it
-const char *g_pc_to_label_txt;
-size_t g_pc_to_label_len;
-u32 g_pc_to_label_off;
-void pc_to_label(u32 pc) {
-    LabelData *l;
-    if (pc_to_label_r(pc, &l, &g_pc_to_label_off)) {
-        g_pc_to_label_txt = l->txt;
-        g_pc_to_label_len = l->len;
-        return;
-    }
-    g_pc_to_label_txt = NULL;
-    g_pc_to_label_len = 0;
-}
-
-bool resolve_symbol(const char *sym, size_t sym_len, bool global, u32 *addr,
-                    Section **sec) {
+bool resolve_symbol(AresState *g, const char *sym, size_t sym_len, bool global,
+                    u32 *addr, Section **sec) {
     LabelData *ret = NULL;
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_labels); i++) {
-        LabelData *l = ARES_ARRAY_GET(&g_labels, i);
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->labels); i++) {
+        LabelData *l = ARES_ARRAY_GET(&g->labels, i);
         if (str_eq_2(sym, sym_len, l->txt, l->len)) {
             ret = l;
             break;
         }
     }
     if (ret && global) {
-        for (size_t i = 0; i < ARES_ARRAY_LEN(&g_globals); i++)
-            if (str_eq_2(sym, sym_len, ARES_ARRAY_GET(&g_globals, i)->str,
-                         ARES_ARRAY_GET(&g_globals, i)->len)) {
+        for (size_t i = 0; i < ARES_ARRAY_LEN(&g->globals); i++)
+            if (str_eq_2(sym, sym_len, ARES_ARRAY_GET(&g->globals, i)->str,
+                         ARES_ARRAY_GET(&g->globals, i)->len)) {
                 *addr = ret->addr;
                 if (sec) {
                     *sec = ret->section;
@@ -2568,68 +2562,68 @@ bool resolve_symbol(const char *sym, size_t sym_len, bool global, u32 *addr,
     return false;
 }
 
-void prepare_aux_sections(void) {
-    g_stack = malloc(sizeof(Section));
-    ares_panic_if_null(g_stack);
-    *g_stack = (Section){.name = "ARES_STACK",
-                         .base = STACK_TOP - STACK_LEN,
-                         .limit = STACK_TOP,
-                         .contents = ARES_ARRAY_FILL(u8, STACK_LEN),
+void prepare_aux_sections(AresState *g) {
+    g->stack = malloc(sizeof(Section));
+    ares_panic_if_null(g->stack);
+    *g->stack = (Section){.name = "ARES_STACK",
+                          .base = STACK_TOP - STACK_LEN,
+                          .limit = STACK_TOP,
+                          .contents = ARES_ARRAY_FILL(u8, STACK_LEN),
+                          .emit_idx = 0,
+                          .align = 1,
+                          .relocations = {.buf = NULL, .len = 0, .cap = 0},
+                          .read = true,
+                          .write = true,
+                          .execute = false,
+                          .physical = false};
+    // fill all the memory with random uninitialized values
+    memset(g->stack->contents.buf, 0xAB, g->stack->contents.len);
+
+    g->regs[2] = STACK_TOP;  // FIXME: now i am diverging from RARS, which
+                             // does STACK_TOP - 4
+
+    g->mmio = malloc(sizeof(*g->mmio));
+    ares_panic_if_null(g->mmio);
+    *g->mmio = (Section){.name = ".mmio",
+                         .base = MMIO_BASE,
+                         .limit = MMIO_END,
+                         .contents = ARES_ARRAY_NEW(u8),
                          .emit_idx = 0,
                          .align = 1,
-                         .relocations = {.buf = NULL, .len = 0, .cap = 0},
+                         .relocations = ARES_ARRAY_NEW(Relocation),
                          .read = true,
                          .write = true,
                          .execute = false,
+                         .super = true,
                          .physical = false};
-    // fill all the memory with random uninitialized values
-    memset(g_stack->contents.buf, 0xAB, g_stack->contents.len);
 
-    g_regs[2] = STACK_TOP;  // FIXME: now i am diverging from RARS, which
-                            // does STACK_TOP - 4
-
-    g_mmio = malloc(sizeof(*g_mmio));
-    ares_panic_if_null(g_mmio);
-    *g_mmio = (Section){.name = ".mmio",
-                        .base = MMIO_BASE,
-                        .limit = MMIO_END,
-                        .contents = ARES_ARRAY_NEW(u8),
-                        .emit_idx = 0,
-                        .align = 1,
-                        .relocations = ARES_ARRAY_NEW(Relocation),
-                        .read = true,
-                        .write = true,
-                        .execute = false,
-                        .super = true,
-                        .physical = false};
-
-    *ARES_ARRAY_PUSH(&g_sections) = g_stack;
-    *ARES_ARRAY_PUSH(&g_sections) = g_mmio;
+    *ARES_ARRAY_PUSH(&g->sections) = g->stack;
+    *ARES_ARRAY_PUSH(&g->sections) = g->mmio;
 }
 
-void prepare_runtime_sections(void) {
+void prepare_runtime_sections(AresState *g) {
     // TODO: dynamically growing stacks?
 
-    *ARES_ARRAY_PUSH(&g_sections) = g_text;
-    *ARES_ARRAY_PUSH(&g_sections) = g_data;
-    *ARES_ARRAY_PUSH(&g_sections) = g_kernel_text;
-    *ARES_ARRAY_PUSH(&g_sections) = g_kernel_data;
+    *ARES_ARRAY_PUSH(&g->sections) = g->text;
+    *ARES_ARRAY_PUSH(&g->sections) = g->data;
+    *ARES_ARRAY_PUSH(&g->sections) = g->kernel_text;
+    *ARES_ARRAY_PUSH(&g->sections) = g->kernel_data;
 }
 
-void free_runtime(void) {
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_sections); i++) {
-        Section *s = *ARES_ARRAY_GET(&g_sections, i);
+void free_runtime(AresState *g) {
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->sections); i++) {
+        Section *s = *ARES_ARRAY_GET(&g->sections, i);
         ARES_ARRAY_FREE(&s->relocations);
         ARES_ARRAY_FREE(&s->contents);
         ARES_ARRAY_FREE(&s->by_linenum);
         free(s);
     }
 
-    ARES_ARRAY_FREE(&g_sections);
-    ARES_ARRAY_FREE(&g_labels);
-    ARES_ARRAY_FREE(&g_deferred_insn);
-    ARES_ARRAY_FREE(&g_globals);
-    ARES_ARRAY_FREE(&g_externs);
-    ARES_ARRAY_FREE(&g_pcrel_hi_relocs);
-    ARES_ARRAY_FREE(&g_shadow_stack);
+    ARES_ARRAY_FREE(&g->sections);
+    ARES_ARRAY_FREE(&g->labels);
+    ARES_ARRAY_FREE(&g->deferred_insn);
+    ARES_ARRAY_FREE(&g->globals);
+    ARES_ARRAY_FREE(&g->externs);
+    ARES_ARRAY_FREE(&g->pcrel_hi_relocs);
+    ARES_ARRAY_FREE(&g->shadow_stack);
 }

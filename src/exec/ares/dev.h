@@ -74,5 +74,5 @@
 #define RIC0_DEVADDR RIC0_BASE
 #define RIC0_END (RIC0_BASE + 4)
 
-bool mmio_read(u32 mmio_addr, int size, u32 *ret);
-bool mmio_write(u32 mmio_addr, int size, u32 value);
+bool mmio_read(AresState *g, u32 mmio_addr, int size, u32 *ret);
+bool mmio_write(AresState *g, u32 mmio_addr, int size, u32 value);

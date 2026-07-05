@@ -5,50 +5,52 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "ares/callsan.h"
 #include "ares/core.h"
 #include "ares/elf.h"
 #include "ares/emulate.h"
 #include "ares/util.h"
 
+AresState *g;
+
 // UTILITY FUNCTIONS
 
 static void emulate_safe(bool use_callsan) {
-    while (!g_exited) {
-        emulate();
+    while (!g->exited) {
+        emulate(g);
 
-        switch (g_runtime_error_type) {
+        switch (g->runtime_error_type) {
             case ERROR_NONE:
                 break;
 
             case ERROR_FETCH:
                 fprintf(stderr,
                         "emulator: fetch error at pc=0x%08x on addr=0x%08x\n",
-                        g_pc, g_runtime_error_params[0]);
+                        g->pc, g->runtime_error_params[0]);
                 return;
 
             case ERROR_LOAD:
                 fprintf(stderr,
                         "emulator: load error at pc=0x%08x on addr=0x%08x\n",
-                        g_pc, g_runtime_error_params[0]);
+                        g->pc, g->runtime_error_params[0]);
                 return;
 
             case ERROR_STORE:
                 fprintf(stderr,
                         "emulator: store error at pc=0x%08x on addr=0x%08x\n",
-                        g_pc, g_runtime_error_params[0]);
+                        g->pc, g->runtime_error_params[0]);
                 return;
 
             case ERROR_UNHANDLED_INSN:
                 fprintf(stderr,
-                        "emulator: unhandled instruction at pc=0x%08x\n", g_pc);
+                        "emulator: unhandled instruction at pc=0x%08x\n",
+                        g->pc);
                 goto err;
 
             case ERROR_CALLSAN_CANTREAD:
                 fprintf(stderr,
                         "callsan: attempt to read from uninitialized register "
                         "%s at pc=0x%08x. Check the calling convention!\n",
-                        REGISTER_NAMES[g_runtime_error_params[0]], g_pc);
+                        REGISTER_NAMES[g->runtime_error_params[0]], g->pc);
                 goto err;
 
             case ERROR_CALLSAN_NOT_SAVED:
@@ -56,7 +58,7 @@ static void emulate_safe(bool use_callsan) {
                         "callsan: attempt to write callee-saved register %s at "
                         "pc=0x%08x without saving it first. Check the calling "
                         "convention!\n",
-                        REGISTER_NAMES[g_runtime_error_params[0]], g_pc);
+                        REGISTER_NAMES[g->runtime_error_params[0]], g->pc);
                 goto err;
 
             case ERROR_CALLSAN_RA_MISMATCH:
@@ -65,7 +67,7 @@ static void emulate_safe(bool use_callsan) {
                     "callsan: attempt to return from non-leaf function without "
                     "restoring ra register at pc=0x%08x. Check the calling "
                     "convention!\n",
-                    g_pc);
+                    g->pc);
                 goto err;
 
             case ERROR_CALLSAN_SP_MISMATCH:
@@ -73,14 +75,14 @@ static void emulate_safe(bool use_callsan) {
                     stderr,
                     "callsan: attempt to return from function with wrong stack "
                     "pointer value at pc=0x%08x\n",
-                    g_pc);
+                    g->pc);
                 goto err;
 
             case ERROR_CALLSAN_RET_EMPTY:
                 fprintf(
                     stderr,
                     "callsan: attempt to return without a call at pc=0x%08x\n",
-                    g_pc);
+                    g->pc);
                 goto err;
 
             case ERROR_CALLSAN_LOAD_STACK:
@@ -88,17 +90,17 @@ static void emulate_safe(bool use_callsan) {
                         "callsan: attempt to read at pc=0x%08x from stack "
                         "address 0x%08x, which hasn't been written to in the "
                         "current function\n",
-                        g_pc, g_runtime_error_params[0]);
+                        g->pc, g->runtime_error_params[0]);
                 goto err;
 
             case ERROR_INVALID_ECALL:
                 fprintf(stderr, "emulator: unhandled ecall %d at pc=0x%08x\n",
-                        g_runtime_error_params[0], g_pc);
+                        g->runtime_error_params[0], g->pc);
                 goto err;
 
             default:
                 fprintf(stderr, "emulator: unhandled error at pc=0x%08x\n",
-                        g_pc);
+                        g->pc);
 
                 return;
         }
@@ -111,19 +113,19 @@ err:
 
     puts("");
     puts("===================== ARES SANITIZER ERROR");
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_shadow_stack); i++) {
-        ShadowStackEnt *ent = ARES_ARRAY_GET(&g_shadow_stack, i);
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->shadow_stack); i++) {
+        ShadowStackEnt *ent = ARES_ARRAY_GET(&g->shadow_stack, i);
         fprintf(stderr, "\t#%zu pc=0x%08x sp=0x%08x ", i, ent->pc, ent->sp);
         LabelData *label;
         u32 off;
-        if (pc_to_label_r(ent->pc, &label, &off)) {
+        if (pc_to_label_r(g, ent->pc, &label, &off)) {
             // TODO: size_t can be > INT_MAX though I think no-one will ever
             // write a string longer than 2.1B chars
             fprintf(stderr, "(at %.*s+0x%x", (int)label->len, label->txt, off);
             size_t line_idx = (ent->pc - TEXT_BASE) / 4;
 
-            if (line_idx < ARES_ARRAY_LEN(&g_text->by_linenum)) {
-                u32 linenum = *ARES_ARRAY_GET(&g_text->by_linenum, line_idx);
+            if (line_idx < ARES_ARRAY_LEN(&g->text->by_linenum)) {
+                u32 linenum = *ARES_ARRAY_GET(&g->text->by_linenum, line_idx);
                 fprintf(stderr, ", line %u)", linenum);
             } else {
                 fprintf(stderr, ")");
@@ -136,7 +138,7 @@ err:
         for (size_t j = 0; j < 4; j++) {
             fprintf(stderr, "x%zu: ", i + j);
             if (i + j < 10) fprintf(stderr, " ");
-            fprintf(stderr, "0x%08x    ", g_regs[i + j]);
+            fprintf(stderr, "0x%08x    ", g->regs[i + j]);
         }
         puts("");
     }
@@ -146,8 +148,8 @@ static char *assemble_from_file(const char *src_path, bool allow_externs) {
     FILE *f = fopen(src_path, "r");
 
     if (!f) {
-        g_error = "assembler: could not open input file";
-        fprintf(stderr, "%s\n", g_error);
+        g->error = "assembler: could not open input file";
+        fprintf(stderr, "%s\n", g->error);
         return NULL;
     }
 
@@ -159,10 +161,10 @@ static char *assemble_from_file(const char *src_path, bool allow_externs) {
     fread(text, s, 1, f);
     fclose(f);
 
-    assemble(text, s, allow_externs);
+    assemble(g, text, s, allow_externs);
 
-    if (g_error) {
-        fprintf(stderr, "assembler: line %u %s\n", g_error_line, g_error);
+    if (g->error) {
+        fprintf(stderr, "assembler: line %u %s\n", g->error_line, g->error);
     }
 
     return text;
@@ -193,7 +195,7 @@ static void run_elf(const char *elf_path, bool use_callsan) {
 
     fread(elf_contents, sz, 1, elf);
 
-    ARES_CHECK_CALL(elf_load(elf_contents, sz, &error), exit);
+    ARES_CHECK_CALL(elf_load(g, elf_contents, sz, &error), exit);
 
     emulate_safe(use_callsan);
 
@@ -205,7 +207,7 @@ exit:
 
 static void emulate_from_source(const char *src_path, bool use_callsan) {
     char *text = assemble_from_file(src_path, false);
-    if (!g_error) emulate_safe(use_callsan);
+    if (!g->error) emulate_safe(use_callsan);
     free(text);
 }
 
@@ -389,13 +391,19 @@ static void asciidump(const char *file_path) {
     fclose(file);
 }
 
+void free_runtime_() {
+    free_runtime(g);
+    free(g);
+}
+
 int main(int argc, const char *const *const argv) {
+    g = calloc(1, sizeof(AresState));
     if (argc < 2) {
         fprintf(stderr, "ares: invalid commandline, try 'help'\n");
         return EXIT_FAILURE;
     }
 
-    atexit(free_runtime);
+    atexit(free_runtime_);
     const char *const command = argv[1];
 
     if (strcmp(command, "help") == 0) {

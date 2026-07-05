@@ -41,14 +41,75 @@ extern export u32 g_pc;
 extern export u32 g_runtime_error_params[2];
 extern export Error g_runtime_error_type;
 
-extern export bool g_exited;
-extern export int g_exit_code;
+void emulator_enter_kernel(AresState *g);
+void emulator_leave_kernel(AresState *g);
+u32 LOAD(AresState *g, u32 addr, int size, bool *err);
+void STORE(AresState *g, u32 addr, u32 val, int size, bool *err);
+void emulator_deliver_interrupt(AresState *g, u32 cause);
+void emulator_init(AresState *g);
+void emulator_interrupt_set_pending(AresState *g, u32 intno);
+void emulator_interrupt_clear_pending(AresState *g, u32 intno);
+size_t disassemble(u32 inst, char *buf, size_t buflen);
 
-void emulator_enter_kernel(void);
-void emulator_leave_kernel(void);
-u32 LOAD(u32 addr, int size, bool *err);
-void STORE(u32 addr, u32 val, int size, bool *err);
-void emulator_deliver_interrupt(u32 cause);
-void emulator_init(void);
-void emulator_interrupt_set_pending(u32 intno);
-void emulator_interrupt_clear_pending(u32 intno);
+typedef struct PcrelHiReloc {
+    u32 label_addr;
+    u32 dest_addr;
+} PcrelHiReloc;
+ARES_ARRAY_TYPE(PcrelHiReloc);
+
+typedef struct {
+    u32 pc;       // for backtrace view
+    u32 sp;       // for backtrace view
+    u32 args[8];  // for backtrace view
+
+    u32 sregs[12];
+    u32 ra;
+    u32 reg_bitmap;
+} ShadowStackEnt;
+
+ARES_ARRAY_TYPE(ShadowStackEnt);
+
+typedef struct AresState {
+    Section *text, *data, *stack, *kernel_text, *kernel_data, *mmio;
+
+    ARES_ARRAY(SectionPtr) sections;
+    ARES_ARRAY(Extern) externs;
+    ARES_ARRAY(LabelData) labels;
+    ARES_ARRAY(Global) globals;
+    ARES_ARRAY(LocalLabel) local_labels;
+    ARES_ARRAY(PcrelHiReloc) pcrel_hi_relocs;
+
+    ARES_ARRAY(DeferredInsn) deferred_insn;
+
+    Section *section;
+
+    bool in_fixup;
+    u32 error_line;
+    const char *error;
+
+    u32 runtime_error_params[2];
+    Error runtime_error_type;
+
+    bool allow_externs;
+
+    u32 reg_bitmap;
+    u32 reg_bitmap_ever_written;
+    ARES_ARRAY(ShadowStackEnt) shadow_stack;
+    u8 callsan_stack_written_by[STACK_LEN / 4];
+    bool callsan_on;
+
+    u32 regs[32];
+    u32 csr[4096];
+    u32 pc;
+
+    u32 mem_written_len;
+    u32 mem_written_addr;
+    u32 reg_written;
+
+    bool exited;
+    int exit_code;
+
+    u32 got_breakpoint;
+
+    int privilege_level;
+} AresState;

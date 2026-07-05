@@ -450,6 +450,8 @@ typedef struct {
 // corrupted files.
 bool elf_read(u8 *elf_contents, u32 elf_len, ReadElfResult *out_res,
               char **out_error);
-bool elf_load(u8 *elf_contents, u32 elf_len, char **out_error);
+struct AresState;
+typedef struct AresState AresState;
+bool elf_load(AresState *g, u8 *elf_contents, u32 elf_len, char **out_error);
 
 #endif

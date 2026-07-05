@@ -9,7 +9,6 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -395,7 +394,7 @@ skip_shdrs:
     return true;
 }
 
-bool elf_load(u8 *elf_contents, u32 elf_len, char **out_error) {
+bool elf_load(AresState *g, u8 *elf_contents, u32 elf_len, char **out_error) {
     Elf32_Ehdr *ehdr = elf_check_full(elf_contents, elf_len, out_error);
     if (!ehdr) return false;
 
@@ -428,7 +427,7 @@ bool elf_load(u8 *elf_contents, u32 elf_len, char **out_error) {
         memcpy(s->contents.buf, elf_contents + phdr->p_offset, phdr->p_filesz);
         s->limit = s->base + s->contents.len;
 
-        *ARES_ARRAY_PUSH(&g_sections) = s;
+        *ARES_ARRAY_PUSH(&g->sections) = s;
     }
 
     // NOTE: no section header string table = no way to resolve names
@@ -446,8 +445,8 @@ bool elf_load(u8 *elf_contents, u32 elf_len, char **out_error) {
 
         // Find ARES section with the same starting address as this ELF section
         Section *s = NULL;
-        for (u32 j = 0; j < ARES_ARRAY_LEN(&g_sections) && !s; j++) {
-            Section *c = *ARES_ARRAY_GET(&g_sections, j);
+        for (u32 j = 0; j < ARES_ARRAY_LEN(&g->sections) && !s; j++) {
+            Section *c = *ARES_ARRAY_GET(&g->sections, j);
             if (c->base == shdr->sh_addr) s = c;
         }
 
@@ -455,10 +454,10 @@ bool elf_load(u8 *elf_contents, u32 elf_len, char **out_error) {
     }
 
 exit:
-    emulator_init();
+    emulator_init(g);
     // NOTE: ARES does not generate native code, it runs instructions in an
     // emulation loop, and thus checks memory accesses when they happen. g_pc
     // can thus be assigned any value here
-    g_pc = ehdr->e_entry;
+    g->pc = ehdr->e_entry;
     return true;
 }

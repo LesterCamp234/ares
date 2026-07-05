@@ -4,25 +4,6 @@
 #include "ares/core.h"
 #include "ares/dev.h"
 
-export u32 g_regs[32];
-export u32 g_csr[4096];
-export u32 g_pc;
-
-export u32 g_mem_written_len;
-export u32 g_mem_written_addr;
-export u32 g_reg_written;
-
-export bool g_exited;
-export int g_exit_code;
-
-// u32 for WASM interop
-export u32 g_got_breakpoint;
-
-extern u32 g_runtime_error_params[2];
-extern Error g_runtime_error_type;
-
-static int g_privilege_level = PRIV_USER;
-
 static size_t i32_to_str(i32 val, char buf[12]);
 
 static inline i32 sext(u32 x, int bits) {
@@ -64,16 +45,16 @@ static inline u32 remu32(u32 a, u32 b) {
     }
 }
 
-Section *emulator_get_section(u32 addr) {
-    for (size_t i = 0; i < ARES_ARRAY_LEN(&g_sections); i++) {
-        Section *sec = *ARES_ARRAY_GET(&g_sections, i);
+Section *emulator_get_section(AresState *g, u32 addr) {
+    for (size_t i = 0; i < ARES_ARRAY_LEN(&g->sections); i++) {
+        Section *sec = *ARES_ARRAY_GET(&g->sections, i);
         if (addr >= sec->base && addr < sec->limit) return sec;
     }
     return NULL;
 }
 
-u8 *emulator_get_addr(u32 addr, int size, Section **out_sec) {
-    Section *addr_sec = emulator_get_section(addr);
+u8 *emulator_get_addr(AresState *g, u32 addr, int size, Section **out_sec) {
+    Section *addr_sec = emulator_get_section(g, addr);
     if (out_sec) *out_sec = addr_sec;
     if (!addr_sec) return NULL;
     u32 end;
@@ -84,19 +65,19 @@ u8 *emulator_get_addr(u32 addr, int size, Section **out_sec) {
     return addr_sec->contents.buf + (addr - addr_sec->base);
 }
 
-u32 LOAD(u32 addr, int size, bool *err) {
+u32 LOAD(AresState *g, u32 addr, int size, bool *err) {
     Section *mem_sec;
-    u8 *mem = emulator_get_addr(addr, size, &mem_sec);
+    u8 *mem = emulator_get_addr(g, addr, size, &mem_sec);
 
     if (!mem_sec || !mem_sec->read ||
-        (mem_sec->super && g_privilege_level == PRIV_USER)) {
+        (mem_sec->super && g->privilege_level == PRIV_USER)) {
         *err = true;
         return 0;
     }
 
     if (mem_sec->base == MMIO_BASE) {
         u32 ret = 0;
-        *err = !mmio_read(addr - MMIO_BASE, size, &ret);
+        *err = !mmio_read(g, addr - MMIO_BASE, size, &ret);
         return ret;
     } else if (!mem) {
         *err = true;
@@ -119,21 +100,21 @@ u32 LOAD(u32 addr, int size, bool *err) {
     return ret;
 }
 
-void STORE(u32 addr, u32 val, int size, bool *err) {
-    g_mem_written_len = size;
-    g_mem_written_addr = addr;
+void STORE(AresState *g, u32 addr, u32 val, int size, bool *err) {
+    g->mem_written_len = size;
+    g->mem_written_addr = addr;
 
     Section *mem_sec;
-    u8 *mem = emulator_get_addr(addr, size, &mem_sec);
+    u8 *mem = emulator_get_addr(g, addr, size, &mem_sec);
 
     if (!mem_sec || !mem_sec->write ||
-        (mem_sec->super && g_privilege_level == PRIV_USER)) {
+        (mem_sec->super && g->privilege_level == PRIV_USER)) {
         *err = true;
         return;
     }
 
     if (mem_sec->base == MMIO_BASE) {
-        *err = !mmio_write(addr - MMIO_BASE, size, val);
+        *err = !mmio_write(g, addr - MMIO_BASE, size, val);
         return;
     } else if (!mem) {
         *err = true;
@@ -156,29 +137,29 @@ void STORE(u32 addr, u32 val, int size, bool *err) {
 
 // ebreak only does a breakpoint if the emulator caller knows about it
 // otherwise, it does nothing to allow runs to complete
-void do_ebreak(void) {
-    g_got_breakpoint = 1;
-    g_pc += 4;
+void do_ebreak(AresState *g) {
+    g->got_breakpoint = 1;
+    g->pc += 4;
 }
 
-void do_syscall(void) {
+void do_syscall(AresState *g) {
     u32 scause = CAUSE_U_ECALL;
-    if (g_privilege_level == PRIV_SUPERVISOR) scause = CAUSE_S_ECALL;
+    if (g->privilege_level == PRIV_SUPERVISOR) scause = CAUSE_S_ECALL;
 
-    if (g_kernel_text && !ARES_ARRAY_IS_EMPTY(&g_kernel_text->contents)) {
-        emulator_deliver_interrupt(scause);
+    if (g->kernel_text && !ARES_ARRAY_IS_EMPTY(&g->kernel_text->contents)) {
+        emulator_deliver_interrupt(g, scause);
         return;
     }
 
-    g_reg_written = 0;
+    g->reg_written = 0;
 
-    u32 param = g_regs[10];
-    if (g_regs[17] == 1) {
+    u32 param = g->regs[10];
+    if (g->regs[17] == 1) {
         // print int
         char buffer[12];
-        size_t len = i32_to_str((i32)g_regs[10], buffer);
+        size_t len = i32_to_str((i32)g->regs[10], buffer);
         for (size_t i = 0; i < len; i++) putchar(buffer[i]);
-    } else if (g_regs[17] == 4) {
+    } else if (g->regs[17] == 4) {
         // print string
         // TODO: a common student bug is to use .ascii instead of .asciz/.string
         // which may result in reading after the end of the data section
@@ -186,51 +167,51 @@ void do_syscall(void) {
         u32 i = 0;
         while (1) {
             bool err = false;
-            u8 ch = LOAD(param + i, 1, &err);
+            u8 ch = LOAD(g, param + i, 1, &err);
             if (err) {
-                g_runtime_error_type = ERROR_LOAD;
-                g_runtime_error_params[0] = param + i;
+                g->runtime_error_type = ERROR_LOAD;
+                g->runtime_error_params[0] = param + i;
                 return;
             }
             if (ch == 0) break;
             i++;
             putchar(ch);
         }
-    } else if (g_regs[17] == 11) {
+    } else if (g->regs[17] == 11) {
         // print char
         putchar(param);
-    } else if (g_regs[17] == 34) {
+    } else if (g->regs[17] == 34) {
         // print int hex
         putchar('0');
         putchar('x');
         for (int i = 32 - 4; i >= 0; i -= 4)
             putchar("0123456789abcdef"[(param >> i) & 15]);
-    } else if (g_regs[17] == 35) {
+    } else if (g->regs[17] == 35) {
         // print int binary
         putchar('0');
         putchar('b');
         for (int i = 31; i >= 0; i--) {
             putchar(((param >> i) & 1) ? '1' : '0');
         }
-    } else if (g_regs[17] == 93 || g_regs[17] == 7 || g_regs[17] == 10) {
+    } else if (g->regs[17] == 93 || g->regs[17] == 7 || g->regs[17] == 10) {
         emu_exit();
     } else {
-        g_runtime_error_params[0] = g_regs[17];
-        g_runtime_error_type = ERROR_INVALID_ECALL;
+        g->runtime_error_params[0] = g->regs[17];
+        g->runtime_error_type = ERROR_INVALID_ECALL;
         return;
     }
 
-    g_pc += 4;
+    g->pc += 4;
 }
 
-void do_sret(void) {
+void do_sret(AresState *g) {
     // SRET is only legal in supervisor
-    if (g_privilege_level != PRIV_SUPERVISOR) {
-        g_runtime_error_params[0] = g_pc;
-        g_runtime_error_type = ERROR_UNHANDLED_INSN;
+    if (g->privilege_level != PRIV_SUPERVISOR) {
+        g->runtime_error_params[0] = g->pc;
+        g->runtime_error_type = ERROR_UNHANDLED_INSN;
         return;
     }
-    u32 status = g_csr[CSR_MSTATUS];
+    u32 status = g->csr[CSR_MSTATUS];
     bool old_spp = status & STATUS_SPP;
     bool old_spie = status & STATUS_SPIE;
     // SIE = SPIE
@@ -239,9 +220,9 @@ void do_sret(void) {
     status |= STATUS_SPIE;
     // SPP = 0
     status &= ~STATUS_SPP;
-    g_csr[CSR_MSTATUS] = status;
-    g_privilege_level = old_spp;
-    g_pc = g_csr[CSR_SEPC];
+    g->csr[CSR_MSTATUS] = status;
+    g->privilege_level = old_spp;
+    g->pc = g->csr[CSR_SEPC];
 }
 
 // TODO: trap invalid CSRs
@@ -250,15 +231,15 @@ void do_sret(void) {
 #define SSTATUS_MASK (STATUS_SIE | STATUS_SPIE | STATUS_SPP | STATUS_FS_MASK)
 #define SUPERVISOR_INT_MASK ((1 << 1) | (1 << 5) | (1 << 9))
 
-u32 rdcsr(u32 csr) {
+u32 rdcsr(AresState *g, u32 csr) {
     u32 mask = -1u;
     if (csr == _CSR_SSTATUS) csr = CSR_MSTATUS, mask = SSTATUS_MASK;
     else if (csr == _CSR_SIE) csr = CSR_MIE, mask = SUPERVISOR_INT_MASK;
     else if (csr == _CSR_SIP) csr = CSR_MIP, mask = SUPERVISOR_INT_MASK;
-    return g_csr[csr] & mask;
+    return g->csr[csr] & mask;
 }
 
-void wrcsr(u32 csr, u32 val) {
+void wrcsr(AresState *g, u32 csr, u32 val) {
     // for SIP, only SSIP (software interrupts) is writable
     // since it is the way to EOI a software interrupt
     // whereas the other ones are EOI'd by the respective devices
@@ -268,7 +249,7 @@ void wrcsr(u32 csr, u32 val) {
     else if (csr == _CSR_SIP)
         csr = CSR_MIP,
         mask = 1u << (CAUSE_SUPERVISOR_SOFTWARE & ~CAUSE_INTERRUPT);
-    g_csr[csr] = (g_csr[csr] & ~mask) | (val & mask);
+    g->csr[csr] = (g->csr[csr] & ~mask) | (val & mask);
 }
 
 // helpers
@@ -319,49 +300,49 @@ static inline i32 c_branch_off(u16 inst) {
                 9);
 }
 
-static bool c_load_word(u32 rd, u32 rs1, u32 off) {
+static bool c_load_word(AresState *g, u32 rd, u32 rs1, u32 off) {
     bool err = false;
-    if (!callsan_can_load(rs1)) return true;
+    if (!callsan_can_load(g, rs1)) return true;
 
-    u32 addr = g_regs[rs1] + off;
-    g_regs[rd] = LOAD(addr, 4, &err);
+    u32 addr = g->regs[rs1] + off;
+    g->regs[rd] = LOAD(g, addr, 4, &err);
     if (err) {
-        g_runtime_error_params[0] = addr;
-        g_runtime_error_type = ERROR_LOAD;
+        g->runtime_error_params[0] = addr;
+        g->runtime_error_type = ERROR_LOAD;
         return true;
     }
 
-    if (!callsan_check_load(addr, 4)) {
-        g_runtime_error_params[0] = addr;
-        g_runtime_error_type = ERROR_CALLSAN_LOAD_STACK;
+    if (!callsan_check_load(g, addr, 4)) {
+        g->runtime_error_params[0] = addr;
+        g->runtime_error_type = ERROR_CALLSAN_LOAD_STACK;
         return true;
     }
 
-    g_pc += 2;
-    g_reg_written = rd;
-    callsan_store(rd);
+    g->pc += 2;
+    g->reg_written = rd;
+    callsan_store(g, rd);
     return true;
 }
 
-static bool c_store_word(u32 rs2, u32 rs1, u32 off) {
+static bool c_store_word(AresState *g, u32 rs2, u32 rs1, u32 off) {
     bool err = false;
-    if (!callsan_can_load(rs1)) return true;
-    if (!callsan_can_load(rs2)) return true;
+    if (!callsan_can_load(g, rs1)) return true;
+    if (!callsan_can_load(g, rs2)) return true;
 
-    u32 addr = g_regs[rs1] + off;
-    STORE(addr, g_regs[rs2], 4, &err);
+    u32 addr = g->regs[rs1] + off;
+    STORE(g, addr, g->regs[rs2], 4, &err);
     if (err) {
-        g_runtime_error_params[0] = addr;
-        g_runtime_error_type = ERROR_STORE;
+        g->runtime_error_params[0] = addr;
+        g->runtime_error_type = ERROR_STORE;
         return true;
     }
 
-    callsan_report_store(addr, 4, rs2);
-    g_pc += 2;
+    callsan_report_store(g, addr, 4, rs2);
+    g->pc += 2;
     return true;
 }
 
-static bool emulate_compressed(u16 inst) {
+static bool emulate_compressed(AresState *g, u16 inst) {
     u32 opcode = extr(inst, 1, 0);
     u32 funct3 = extr(inst, 15, 13);
 
@@ -370,20 +351,20 @@ static bool emulate_compressed(u16 inst) {
             u32 rd = c_reg(extr(inst, 4, 2));
             u32 nzuimm = c_addi4spn_nzuimm(inst);
             if (nzuimm == 0) return false;
-            if (!callsan_can_load(REG_SP)) return true;
+            if (!callsan_can_load(g, REG_SP)) return true;
 
-            g_regs[rd] = g_regs[REG_SP] + nzuimm;
-            g_pc += 2;
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->regs[rd] = g->regs[REG_SP] + nzuimm;
+            g->pc += 2;
+            g->reg_written = rd;
+            callsan_store(g, rd);
             return true;
         }
         if (funct3 == 0b010) {  // c.lw
-            return c_load_word(c_reg(extr(inst, 4, 2)), c_reg(extr(inst, 9, 7)),
-                               c_lw_sw_off(inst));
+            return c_load_word(g, c_reg(extr(inst, 4, 2)),
+                               c_reg(extr(inst, 9, 7)), c_lw_sw_off(inst));
         }
         if (funct3 == 0b110) {  // c.sw
-            return c_store_word(c_reg(extr(inst, 4, 2)),
+            return c_store_word(g, c_reg(extr(inst, 4, 2)),
                                 c_reg(extr(inst, 9, 7)), c_lw_sw_off(inst));
         }
         return false;
@@ -395,34 +376,34 @@ static bool emulate_compressed(u16 inst) {
             i32 nzimm = c_imm6(inst);
             if (rd == 0) {
                 if (nzimm != 0) return false;
-                g_pc += 2;
+                g->pc += 2;
                 return true;
             }
             if (nzimm == 0) return false;
-            if (!callsan_can_load(rd)) return true;
+            if (!callsan_can_load(g, rd)) return true;
 
-            g_regs[rd] += nzimm;
-            g_pc += 2;
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->regs[rd] += nzimm;
+            g->pc += 2;
+            g->reg_written = rd;
+            callsan_store(g, rd);
             return true;
         }
         if (funct3 == 0b001) {  // c.jal
-            g_regs[REG_RA] = g_pc + 2;
-            g_reg_written = REG_RA;
-            callsan_store(REG_RA);
-            g_pc += c_jump_off(inst);
-            callsan_call();
+            g->regs[REG_RA] = g->pc + 2;
+            g->reg_written = REG_RA;
+            callsan_store(g, REG_RA);
+            g->pc += c_jump_off(inst);
+            callsan_call(g);
             return true;
         }
         if (funct3 == 0b010) {  // c.li
             u32 rd = extr(inst, 11, 7);
             if (rd == 0) return false;
 
-            g_regs[rd] = c_imm6(inst);
-            g_pc += 2;
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->regs[rd] = c_imm6(inst);
+            g->pc += 2;
+            g->reg_written = rd;
+            callsan_store(g, rd);
             return true;
         }
         if (funct3 == 0b011) {  // c.addi16sp / c.lui
@@ -430,21 +411,21 @@ static bool emulate_compressed(u16 inst) {
             if (rd == REG_SP) {
                 i32 nzimm = c_addi16sp_nzimm(inst);
                 if (nzimm == 0) return false;
-                if (!callsan_can_load(REG_SP)) return true;
+                if (!callsan_can_load(g, REG_SP)) return true;
 
-                g_regs[REG_SP] += nzimm;
-                g_pc += 2;
-                g_reg_written = REG_SP;
-                callsan_store(REG_SP);
+                g->regs[REG_SP] += nzimm;
+                g->pc += 2;
+                g->reg_written = REG_SP;
+                callsan_store(g, REG_SP);
                 return true;
             }
 
             i32 nzimm = c_imm6(inst);
             if (rd == 0 || nzimm == 0) return false;
-            g_regs[rd] = (u32)(nzimm << 12);
-            g_pc += 2;
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->regs[rd] = (u32)(nzimm << 12);
+            g->pc += 2;
+            g->reg_written = rd;
+            callsan_store(g, rd);
             return true;
         }
         if (funct3 == 0b100) {
@@ -455,53 +436,53 @@ static bool emulate_compressed(u16 inst) {
                 if (extr(inst, 12, 12) != 0) return false;
                 u32 shamt = extr(inst, 6, 2);
                 if (shamt == 0) return false;
-                if (!callsan_can_load(rd)) return true;
+                if (!callsan_can_load(g, rd)) return true;
 
-                if (funct2 == 0b00) g_regs[rd] >>= shamt;
-                else g_regs[rd] = (u32)((i32)g_regs[rd] >> shamt);
-                g_pc += 2;
-                g_reg_written = rd;
-                callsan_store(rd);
+                if (funct2 == 0b00) g->regs[rd] >>= shamt;
+                else g->regs[rd] = (u32)((i32)g->regs[rd] >> shamt);
+                g->pc += 2;
+                g->reg_written = rd;
+                callsan_store(g, rd);
                 return true;
             }
             if (funct2 == 0b10) {  // c.andi
-                if (!callsan_can_load(rd)) return true;
+                if (!callsan_can_load(g, rd)) return true;
 
-                g_regs[rd] &= c_imm6(inst);
-                g_pc += 2;
-                g_reg_written = rd;
-                callsan_store(rd);
+                g->regs[rd] &= c_imm6(inst);
+                g->pc += 2;
+                g->reg_written = rd;
+                callsan_store(g, rd);
                 return true;
             }
             if (funct2 == 0b11) {  // c.sub / c.xor / c.or / c.and
                 if (extr(inst, 12, 12) != 0) return false;
                 u32 rs2 = c_reg(extr(inst, 4, 2));
                 u32 op = extr(inst, 6, 5);
-                if (!callsan_can_load(rd)) return true;
-                if (!callsan_can_load(rs2)) return true;
+                if (!callsan_can_load(g, rd)) return true;
+                if (!callsan_can_load(g, rs2)) return true;
 
-                if (op == 0b00) g_regs[rd] -= g_regs[rs2];       // c.sub
-                else if (op == 0b01) g_regs[rd] ^= g_regs[rs2];  // c.xor
-                else if (op == 0b10) g_regs[rd] |= g_regs[rs2];  // c.or
-                else g_regs[rd] &= g_regs[rs2];                  // c.and
-                g_pc += 2;
-                g_reg_written = rd;
-                callsan_store(rd);
+                if (op == 0b00) g->regs[rd] -= g->regs[rs2];       // c.sub
+                else if (op == 0b01) g->regs[rd] ^= g->regs[rs2];  // c.xor
+                else if (op == 0b10) g->regs[rd] |= g->regs[rs2];  // c.or
+                else g->regs[rd] &= g->regs[rs2];                  // c.and
+                g->pc += 2;
+                g->reg_written = rd;
+                callsan_store(g, rd);
                 return true;
             }
             return false;
         }
         if (funct3 == 0b101) {  // c.j
-            g_pc += c_jump_off(inst);
+            g->pc += c_jump_off(inst);
             return true;
         }
         if (funct3 == 0b110 || funct3 == 0b111) {  // c.beqz / c.bnez
             u32 rs1 = c_reg(extr(inst, 9, 7));
-            if (!callsan_can_load(rs1)) return true;
+            if (!callsan_can_load(g, rs1)) return true;
 
-            bool take = g_regs[rs1] == 0;
+            bool take = g->regs[rs1] == 0;
             if (funct3 == 0b111) take = !take;
-            g_pc += take ? c_branch_off(inst) : 2;
+            g->pc += take ? c_branch_off(inst) : 2;
             return true;
         }
         return false;
@@ -513,18 +494,18 @@ static bool emulate_compressed(u16 inst) {
             u32 rd = extr(inst, 11, 7);
             u32 shamt = extr(inst, 6, 2);
             if (rd == 0 || shamt == 0) return false;
-            if (!callsan_can_load(rd)) return true;
+            if (!callsan_can_load(g, rd)) return true;
 
-            g_regs[rd] <<= shamt;
-            g_pc += 2;
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->regs[rd] <<= shamt;
+            g->pc += 2;
+            g->reg_written = rd;
+            callsan_store(g, rd);
             return true;
         }
         if (funct3 == 0b010) {  // c.lwsp
             u32 rd = extr(inst, 11, 7);
             if (rd == 0) return false;
-            return c_load_word(rd, REG_SP, c_lwsp_off(inst));
+            return c_load_word(g, rd, REG_SP, c_lwsp_off(inst));
         }
         if (funct3 == 0b100) {
             u32 rd = extr(inst, 11, 7);
@@ -533,50 +514,50 @@ static bool emulate_compressed(u16 inst) {
             if (extr(inst, 12, 12) == 0) {
                 if (rs2 == 0) {  // c.jr
                     if (rd == 0) return false;
-                    if (!callsan_can_load(rd)) return true;
-                    if (rd == REG_RA && !callsan_ret()) return true;
-                    g_pc = g_regs[rd] & ~1u;
+                    if (!callsan_can_load(g, rd)) return true;
+                    if (rd == REG_RA && !callsan_ret(g)) return true;
+                    g->pc = g->regs[rd] & ~1u;
                     return true;
                 }
                 if (rd == 0) return false;
-                if (!callsan_can_load(rs2)) return true;
+                if (!callsan_can_load(g, rs2)) return true;
 
-                g_regs[rd] = g_regs[rs2];
-                g_pc += 2;
-                g_reg_written = rd;
-                callsan_store(rd);
+                g->regs[rd] = g->regs[rs2];
+                g->pc += 2;
+                g->reg_written = rd;
+                callsan_store(g, rd);
                 return true;
             }
 
             if (rs2 == 0) {
                 if (rd == 0) {  // c.ebreak
-                    g_got_breakpoint = 1;
-                    g_pc += 2;
+                    g->got_breakpoint = 1;
+                    g->pc += 2;
                     return true;
                 }
-                if (!callsan_can_load(rd)) return true;
-                u32 target = g_regs[rd] & ~1u;
+                if (!callsan_can_load(g, rd)) return true;
+                u32 target = g->regs[rd] & ~1u;
 
-                g_regs[REG_RA] = g_pc + 2;
-                g_reg_written = REG_RA;
-                callsan_store(REG_RA);
-                g_pc = target;
-                callsan_call();
+                g->regs[REG_RA] = g->pc + 2;
+                g->reg_written = REG_RA;
+                callsan_store(g, REG_RA);
+                g->pc = target;
+                callsan_call(g);
                 return true;
             }
 
             if (rd == 0) return false;
-            if (!callsan_can_load(rd)) return true;
-            if (!callsan_can_load(rs2)) return true;
+            if (!callsan_can_load(g, rd)) return true;
+            if (!callsan_can_load(g, rs2)) return true;
 
-            g_regs[rd] += g_regs[rs2];
-            g_pc += 2;
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->regs[rd] += g->regs[rs2];
+            g->pc += 2;
+            g->reg_written = rd;
+            callsan_store(g, rd);
             return true;
         }
         if (funct3 == 0b110) {  // c.swsp
-            return c_store_word(extr(inst, 6, 2), REG_SP, c_swsp_off(inst));
+            return c_store_word(g, extr(inst, 6, 2), REG_SP, c_swsp_off(inst));
         }
         return false;
     }
@@ -584,42 +565,42 @@ static bool emulate_compressed(u16 inst) {
     return false;
 }
 
-void emulate(void) {
-    g_runtime_error_type = ERROR_NONE;
-    g_mem_written_len = 0;
-    g_reg_written = 0;
-    g_regs[0] = 0;
-    g_got_breakpoint = 0;
+void emulate(AresState *g) {
+    g->runtime_error_type = ERROR_NONE;
+    g->mem_written_len = 0;
+    g->reg_written = 0;
+    g->regs[0] = 0;
+    g->got_breakpoint = 0;
     bool err;
 
-    if (g_privilege_level == PRIV_USER || (g_csr[CSR_MSTATUS] & STATUS_SIE)) {
-        u32 pending = g_csr[CSR_MIP] & g_csr[CSR_MIE];
+    if (g->privilege_level == PRIV_USER || (g->csr[CSR_MSTATUS] & STATUS_SIE)) {
+        u32 pending = g->csr[CSR_MIP] & g->csr[CSR_MIE];
         if (pending != 0) {
             int intno = __builtin_ctz(pending);
-            emulator_deliver_interrupt(CAUSE_INTERRUPT | intno);
+            emulator_deliver_interrupt(g, CAUSE_INTERRUPT | intno);
         }
     }
 
-    u32 halfword = LOAD(g_pc, 2, &err);
+    u32 halfword = LOAD(g, g->pc, 2, &err);
     if (err) {
-        g_runtime_error_params[0] = g_pc;
-        g_runtime_error_type = ERROR_FETCH;
+        g->runtime_error_params[0] = g->pc;
+        g->runtime_error_type = ERROR_FETCH;
         return;
     }
 
     // compressed instructions are 16-bit and must be handled separately
     if ((halfword & 0b11) != 0b11) {
-        if (!emulate_compressed((u16)halfword)) {
-            g_runtime_error_params[0] = g_pc;
-            g_runtime_error_type = ERROR_UNHANDLED_INSN;
+        if (!emulate_compressed(g, (u16)halfword)) {
+            g->runtime_error_params[0] = g->pc;
+            g->runtime_error_type = ERROR_UNHANDLED_INSN;
         }
         return;
     }
 
-    u32 inst = LOAD(g_pc, 4, &err);
+    u32 inst = LOAD(g, g->pc, 4, &err);
     if (err) {
-        g_runtime_error_params[0] = g_pc;
-        g_runtime_error_type = ERROR_FETCH;
+        g->runtime_error_params[0] = g->pc;
+        g->runtime_error_type = ERROR_FETCH;
         return;
     }
 
@@ -639,130 +620,130 @@ void emulate(void) {
     i32 itype = sext(extr(inst, 31, 20), 12);
     i32 utype = extr(inst, 31, 12) << 12;
 
-    u32 S1 = g_regs[rs1];
-    u32 S2 = g_regs[rs2];
-    u32 *D = &g_regs[rd];
+    u32 S1 = g->regs[rs1];
+    u32 S2 = g->regs[rs2];
+    u32 *D = &g->regs[rd];
 
     u32 opcode = extr(inst, 6, 0);
 
     // LUI
     if (opcode == 0b0110111) {
         *D = utype;
-        g_pc += 4;
-        g_reg_written = rd;
-        callsan_store(rd);
+        g->pc += 4;
+        g->reg_written = rd;
+        callsan_store(g, rd);
         return;
     }
 
     // AUIPC
     if (opcode == 0b0010111) {
-        *D = g_pc + utype;
-        g_pc += 4;
-        g_reg_written = rd;
-        callsan_store(rd);
+        *D = g->pc + utype;
+        g->pc += 4;
+        g->reg_written = rd;
+        callsan_store(g, rd);
         return;
     }
 
     // JAL
     if (opcode == 0b1101111) {
-        *D = g_pc + 4;
-        g_pc += jtype;
-        g_reg_written = rd;
-        callsan_store(rd);
-        if (rd == 1) callsan_call();
+        *D = g->pc + 4;
+        g->pc += jtype;
+        g->reg_written = rd;
+        callsan_store(g, rd);
+        if (rd == 1) callsan_call(g);
         return;
     }
 
     // JALR
     if (opcode == 0b1100111) {
-        if (!callsan_can_load(rs1)) return;
-        callsan_store(rd);
-        *D = g_pc + 4;
+        if (!callsan_can_load(g, rs1)) return;
+        callsan_store(g, rd);
+        *D = g->pc + 4;
         // this has to be checked before updating pc so that the highlighted pc
         // is correct
         if (rd == 0 && rs1 == 1) {  // jr ra/ret
-            if (!callsan_ret()) return;
+            if (!callsan_ret(g)) return;
         }
-        g_pc = (S1 + itype) & ~1;
-        if (rd == 1) callsan_call();
-        g_reg_written = rd;
+        g->pc = (S1 + itype) & ~1;
+        if (rd == 1) callsan_call(g);
+        g->reg_written = rd;
         return;
     }
 
     // BEQ/BNE/BLT/BGE/BLTU/BGEU
     if (opcode == 0b1100011) {
-        if (!callsan_can_load(rs1)) return;
-        if (!callsan_can_load(rs2)) return;
+        if (!callsan_can_load(g, rs1)) return;
+        if (!callsan_can_load(g, rs2)) return;
         bool T = false;
         if ((funct3 >> 1) == 0) T = S1 == S2;                // EQ/NE
         else if ((funct3 >> 1) == 2) T = (i32)S1 < (i32)S2;  // LT/GE
         else if ((funct3 >> 1) == 3) T = S1 < S2;            // LTU/GEU
         else {
-            g_runtime_error_params[0] = g_pc;
-            g_runtime_error_type = ERROR_UNHANDLED_INSN;
+            g->runtime_error_params[0] = g->pc;
+            g->runtime_error_type = ERROR_UNHANDLED_INSN;
             return;
         }
         // invert: EQ->NE, LT->GE, LTU->BGEU
         if (funct3 & 1) T = !T;
-        g_pc += T ? btype : 4;
+        g->pc += T ? btype : 4;
         return;
     }
 
     // LB/LH/LW/LBU/LHU
     if (opcode == 0b0000011) {
-        if (!callsan_can_load(rs1)) return;
+        if (!callsan_can_load(g, rs1)) return;
 
-        if (funct3 == 0b000) *D = sext(LOAD(S1 + itype, 1, &err), 8);
-        else if (funct3 == 0b001) *D = sext(LOAD(S1 + itype, 2, &err), 16);
-        else if (funct3 == 0b010) *D = LOAD(S1 + itype, 4, &err);
-        else if (funct3 == 0b100) *D = LOAD(S1 + itype, 1, &err);
-        else if (funct3 == 0b101) *D = LOAD(S1 + itype, 2, &err);
+        if (funct3 == 0b000) *D = sext(LOAD(g, S1 + itype, 1, &err), 8);
+        else if (funct3 == 0b001) *D = sext(LOAD(g, S1 + itype, 2, &err), 16);
+        else if (funct3 == 0b010) *D = LOAD(g, S1 + itype, 4, &err);
+        else if (funct3 == 0b100) *D = LOAD(g, S1 + itype, 1, &err);
+        else if (funct3 == 0b101) *D = LOAD(g, S1 + itype, 2, &err);
         else {
-            g_runtime_error_type = ERROR_UNHANDLED_INSN;
+            g->runtime_error_type = ERROR_UNHANDLED_INSN;
             return;
         }
         if (err) {
-            g_runtime_error_params[0] = S1 + itype;
-            g_runtime_error_type = ERROR_LOAD;
+            g->runtime_error_params[0] = S1 + itype;
+            g->runtime_error_type = ERROR_LOAD;
             return;
         }
-        if (!callsan_check_load(S1 + itype, 1 << (funct3 & 0b11))) {
-            g_runtime_error_params[0] = S1 + itype;
-            g_runtime_error_type = ERROR_CALLSAN_LOAD_STACK;
+        if (!callsan_check_load(g, S1 + itype, 1 << (funct3 & 0b11))) {
+            g->runtime_error_params[0] = S1 + itype;
+            g->runtime_error_type = ERROR_CALLSAN_LOAD_STACK;
             return;
         }
 
-        g_pc += 4;
-        g_reg_written = rd;
-        callsan_store(rd);
+        g->pc += 4;
+        g->reg_written = rd;
+        callsan_store(g, rd);
         return;
     }
 
     // SB/SH/SW
     if (opcode == 0b0100011) {
-        if (!callsan_can_load(rs1)) return;
-        if (!callsan_can_load(rs2)) return;
-        if (funct3 == 0b000) STORE(S1 + stype, S2, 1, &err);
-        else if (funct3 == 0b001) STORE(S1 + stype, S2, 2, &err);
-        else if (funct3 == 0b010) STORE(S1 + stype, S2, 4, &err);
+        if (!callsan_can_load(g, rs1)) return;
+        if (!callsan_can_load(g, rs2)) return;
+        if (funct3 == 0b000) STORE(g, S1 + stype, S2, 1, &err);
+        else if (funct3 == 0b001) STORE(g, S1 + stype, S2, 2, &err);
+        else if (funct3 == 0b010) STORE(g, S1 + stype, S2, 4, &err);
         else {
-            g_runtime_error_params[0] = g_pc;
-            g_runtime_error_type = ERROR_UNHANDLED_INSN;
+            g->runtime_error_params[0] = g->pc;
+            g->runtime_error_type = ERROR_UNHANDLED_INSN;
             return;
         }
         if (err) {
-            g_runtime_error_params[0] = S1 + stype;
-            g_runtime_error_type = ERROR_STORE;
+            g->runtime_error_params[0] = S1 + stype;
+            g->runtime_error_type = ERROR_STORE;
             return;
         }
-        callsan_report_store(S1 + stype, 1 << funct3, rs2);
-        g_pc += 4;
+        callsan_report_store(g, S1 + stype, 1 << funct3, rs2);
+        g->pc += 4;
         return;
     }
 
     // non-Load I-type
     if (opcode == 0b0010011) {
-        if (!callsan_can_load(rs1)) return;
+        if (!callsan_can_load(g, rs1)) return;
         u32 shamt = itype & 31;
         if (funct3 == 0b000) *D = S1 + itype;                       // ADDI
         else if (funct3 == 0b010) *D = (i32)S1 < itype;             // SLTI
@@ -775,20 +756,20 @@ void emulate(void) {
         else if (funct3 == 0b101 && funct7 == 32)
             *D = (i32)S1 >> shamt;  // SRAI
         else {
-            g_runtime_error_params[0] = g_pc;
-            g_runtime_error_type = ERROR_UNHANDLED_INSN;
+            g->runtime_error_params[0] = g->pc;
+            g->runtime_error_type = ERROR_UNHANDLED_INSN;
             return;
         }
-        g_pc += 4;
-        g_reg_written = rd;
-        callsan_store(rd);
+        g->pc += 4;
+        g->reg_written = rd;
+        callsan_store(g, rd);
         return;
     }
 
     // R-type
     if (opcode == 0b0110011) {
-        if (!callsan_can_load(rs1)) return;
-        if (!callsan_can_load(rs2)) return;
+        if (!callsan_can_load(g, rs1)) return;
+        if (!callsan_can_load(g, rs2)) return;
         u32 shamt = S2 & 31;
         if (funct3 == 0b000 && funct7 == 0) *D = S1 + S2;                 // ADD
         else if (funct3 == 0b000 && funct7 == 32) *D = S1 - S2;           // SUB
@@ -812,23 +793,23 @@ void emulate(void) {
         else if (funct3 == 0b110 && funct7 == 1) *D = rem32(S1, S2);   // REM
         else if (funct3 == 0b111 && funct7 == 1) *D = remu32(S1, S2);  // REMU
         else {
-            g_runtime_error_params[0] = g_pc;
-            g_runtime_error_type = ERROR_UNHANDLED_INSN;
+            g->runtime_error_params[0] = g->pc;
+            g->runtime_error_type = ERROR_UNHANDLED_INSN;
             return;
         }
-        g_pc += 4;
-        g_reg_written = rd;
-        callsan_store(rd);
+        g->pc += 4;
+        g->reg_written = rd;
+        callsan_store(g, rd);
         return;
     }
     // SYSTEM instructions
     if (opcode == 0x73) {
         if (funct3 == 0b000 && itype == 0) {
-            do_syscall();
+            do_syscall(g);
             return;
         }
         if (funct3 == 0b000 && itype == 1) {
-            do_ebreak();
+            do_ebreak(g);
             return;
         }
 
@@ -836,55 +817,55 @@ void emulate(void) {
         // slight imprecision for CSRs in general,
         // but we only support privileged CSRs
 
-        if (g_privilege_level == PRIV_USER) {
-            g_runtime_error_params[0] = g_pc;
-            g_runtime_error_type = ERROR_PROTECTION;
+        if (g->privilege_level == PRIV_USER) {
+            g->runtime_error_params[0] = g->pc;
+            g->runtime_error_type = ERROR_PROTECTION;
             return;
         }
 
         if (funct3 == 0b000) {
             if (itype == 0x102) {
-                do_sret();
+                do_sret(g);
                 return;
             }
         } else {                    // all CSR ops
             if (funct3 == 0b001) {  // CSRRW
-                u32 old = rdcsr(itype);
-                wrcsr(itype, g_regs[rs1]);
-                g_regs[rd] = old;
+                u32 old = rdcsr(g, itype);
+                wrcsr(g, itype, g->regs[rs1]);
+                g->regs[rd] = old;
             } else if (funct3 == 0b010) {  // CSRRS
-                u32 old = rdcsr(itype);
-                if (rs1 != 0) wrcsr(itype, old | g_regs[rs1]);
-                g_regs[rd] = old;
+                u32 old = rdcsr(g, itype);
+                if (rs1 != 0) wrcsr(g, itype, old | g->regs[rs1]);
+                g->regs[rd] = old;
             } else if (funct3 == 0b011) {  // CSRRC
-                u32 old = rdcsr(itype);
-                if (rs1 != 0) wrcsr(itype, old & ~g_regs[rs1]);
-                g_regs[rd] = old;
+                u32 old = rdcsr(g, itype);
+                if (rs1 != 0) wrcsr(g, itype, old & ~g->regs[rs1]);
+                g->regs[rd] = old;
             } else if (funct3 == 0b101) {  // CSRRWI
-                g_regs[rd] = rdcsr(itype);
-                wrcsr(itype, rs1);         // used as imm
+                g->regs[rd] = rdcsr(g, itype);
+                wrcsr(g, itype, rs1);      // used as imm
             } else if (funct3 == 0b110) {  // CSRRSI
-                u32 old = rdcsr(itype);
-                if (rs1 != 0) wrcsr(itype, old | rs1);
-                g_regs[rd] = old;
+                u32 old = rdcsr(g, itype);
+                if (rs1 != 0) wrcsr(g, itype, old | rs1);
+                g->regs[rd] = old;
             } else if (funct3 == 0b111) {  // CSRRCI
-                u32 old = rdcsr(itype);
-                if (rs1 != 0) wrcsr(itype, old & ~rs1);
-                g_regs[rd] = old;
+                u32 old = rdcsr(g, itype);
+                if (rs1 != 0) wrcsr(g, itype, old & ~rs1);
+                g->regs[rd] = old;
             } else {
                 goto end;
             }
-            g_reg_written = rd;
-            callsan_store(rd);
+            g->reg_written = rd;
+            callsan_store(g, rd);
         }
-        g_pc += 4;
+        g->pc += 4;
         return;
     }
 
     // if i reached here, it's an unhandled instruction
 end:
-    g_runtime_error_params[0] = g_pc;
-    g_runtime_error_type = ERROR_UNHANDLED_INSN;
+    g->runtime_error_params[0] = g->pc;
+    g->runtime_error_type = ERROR_UNHANDLED_INSN;
     return;
 }
 
@@ -1496,59 +1477,40 @@ done:
 }
 
 // wrapper for the webui
-u32 emu_load(u32 addr, int size) {
+u32 emu_load(AresState *g, u32 addr, int size) {
     bool err;
-    u32 val = LOAD(addr, size, &err);
+    u32 val = LOAD(g, addr, size, &err);
     if (err) return 0;
     return val;
 }
 
-char g_emu_disassemble_buf[64];
-
-size_t emu_disassemble_addr(u32 addr) {
-    bool err = false;
-    u32 inst = LOAD(addr, 2, &err);
-    if (err) {
-        g_emu_disassemble_buf[0] = '\0';
-        return 0;
-    }
-
-    if ((inst & 0b11) == 0b11) {
-        inst = LOAD(addr, 4, &err);
-        if (err) {
-            g_emu_disassemble_buf[0] = '\0';
-            return 0;
-        }
-    }
-
-    return disassemble(inst, g_emu_disassemble_buf, 64);
+void emulator_enter_kernel(AresState *g) {
+    g->privilege_level = PRIV_SUPERVISOR;
 }
 
-void emulator_enter_kernel(void) { g_privilege_level = PRIV_SUPERVISOR; }
+void emulator_leave_kernel(AresState *g) { g->privilege_level = PRIV_USER; }
 
-void emulator_leave_kernel(void) { g_privilege_level = PRIV_USER; }
-
-void emulator_interrupt_set_pending(u32 intno) {
-    g_csr[CSR_MIP] |= 1u << intno;
+void emulator_interrupt_set_pending(AresState *g, u32 intno) {
+    g->csr[CSR_MIP] |= 1u << intno;
 }
 
-void emulator_interrupt_clear_pending(u32 intno) {
-    g_csr[CSR_MIP] &= ~(1u << intno);
+void emulator_interrupt_clear_pending(AresState *g, u32 intno) {
+    g->csr[CSR_MIP] &= ~(1u << intno);
 }
 
-void emulator_deliver_interrupt(u32 cause) {
+void emulator_deliver_interrupt(AresState *g, u32 cause) {
     bool is_interrupt = cause & CAUSE_INTERRUPT;
     u32 off = cause & ~CAUSE_INTERRUPT;
     assert(off < 32);
 
-    int prev_privilege = g_privilege_level;
+    int prev_privilege = g->privilege_level;
 
-    g_csr[CSR_SEPC] = g_pc;
-    g_csr[CSR_SCAUSE] = cause;
+    g->csr[CSR_SEPC] = g->pc;
+    g->csr[CSR_SCAUSE] = cause;
 
-    u32 status = g_csr[CSR_MSTATUS];
+    u32 status = g->csr[CSR_MSTATUS];
     bool was_enabled = status & STATUS_SIE;
-    g_privilege_level = PRIV_SUPERVISOR;
+    g->privilege_level = PRIV_SUPERVISOR;
 
     // STATUS.xIE = 0
     status &= ~STATUS_SIE;
@@ -1558,34 +1520,34 @@ void emulator_deliver_interrupt(u32 cause) {
     // NOTE: SPP is 1 bit long
     status = (status & ~STATUS_SPP) |
              ((prev_privilege != PRIV_USER) ? STATUS_SPP : 0);
-    g_csr[CSR_MSTATUS] = status;
+    g->csr[CSR_MSTATUS] = status;
 
-    u32 tvec_base = g_csr[CSR_STVEC] & ~0x3u;
-    u32 tvec_mode = g_csr[CSR_STVEC] & 0x3u;
-    if (tvec_mode == 1 && is_interrupt) g_pc = tvec_base + (off << 2);
-    else g_pc = tvec_base;
+    u32 tvec_base = g->csr[CSR_STVEC] & ~0x3u;
+    u32 tvec_mode = g->csr[CSR_STVEC] & 0x3u;
+    if (tvec_mode == 1 && is_interrupt) g->pc = tvec_base + (off << 2);
+    else g->pc = tvec_base;
 }
 
-void emulator_init(void) {
-    g_exited = false;
-    g_exit_code = 0;
+void emulator_init(AresState *g) {
+    g->exited = false;
+    g->exit_code = 0;
 
-    memset(g_regs, 0, sizeof(g_regs));
-    g_pc = TEXT_BASE;
-    g_mem_written_len = 0;
-    g_mem_written_addr = 0;
-    g_reg_written = 0;
-    g_error_line = 0;
-    g_error = NULL;
+    memset(g->regs, 0, sizeof(g->regs));
+    g->pc = TEXT_BASE;
+    g->mem_written_len = 0;
+    g->mem_written_addr = 0;
+    g->reg_written = 0;
+    g->error_line = 0;
+    g->error = NULL;
 
-    memset(g_runtime_error_params, 0, sizeof(g_runtime_error_params));
-    g_runtime_error_type = 0;
+    memset(g->runtime_error_params, 0, sizeof(g->runtime_error_params));
+    g->runtime_error_type = 0;
 
-    prepare_aux_sections();
+    prepare_aux_sections(g);
 
-    memset(g_csr, 0, sizeof(g_csr));
-    g_csr[CSR_MSTATUS] |= STATUS_SIE;
-    g_csr[CSR_MIE] |= 1u << (CAUSE_SUPERVISOR_SOFTWARE & ~CAUSE_INTERRUPT);
-    g_csr[CSR_MIE] |= 1u << (CAUSE_SUPERVISOR_TIMER & ~CAUSE_INTERRUPT);
-    g_csr[CSR_MIE] |= 1u << (CAUSE_SUPERVISOR_EXTERNAL & ~CAUSE_INTERRUPT);
+    memset(g->csr, 0, sizeof(g->csr));
+    g->csr[CSR_MSTATUS] |= STATUS_SIE;
+    g->csr[CSR_MIE] |= 1u << (CAUSE_SUPERVISOR_SOFTWARE & ~CAUSE_INTERRUPT);
+    g->csr[CSR_MIE] |= 1u << (CAUSE_SUPERVISOR_TIMER & ~CAUSE_INTERRUPT);
+    g->csr[CSR_MIE] |= 1u << (CAUSE_SUPERVISOR_EXTERNAL & ~CAUSE_INTERRUPT);
 }
