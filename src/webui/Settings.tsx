@@ -1,13 +1,92 @@
 import { Component, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { darkTheme, lightTheme, setDarkTheme, setLightTheme, themeList } from "./Theme";
+import {
+    appendCustomTheme,
+    cssVarNames,
+    darkTheme,
+    lightTheme,
+    setDarkTheme,
+    setLightTheme,
+    setTheme,
+    themeList
+} from "./Theme";
 import { Modal } from "./Modal";
 
 export const Settings: Component<{ close: () => void }> = (props) => {
     const [selection, setSelection] = createSignal(0);
+    const [themeError, setThemeError] = createSignal("");
+    const [displayError, setDisplayError] = createSignal(false);
+    let customThemeLight = false;
 
     function modifyTheme(value: string, light: boolean) {
-        if (light) setLightTheme(value);
-        else setDarkTheme(value);
+        const suffix = light ? "light" : "dark";
+        if (value === "custom-" + suffix) {
+            if (document.getElementById("customTheme-" + suffix) === null) {
+                const custom = localStorage.getItem("customTheme-" + suffix);
+                if (custom !== null && custom !== "") {
+                    appendCustomTheme(custom, suffix);
+                    setTheme(value, light);
+                }
+            } else {
+                setTheme(value, light);
+            }
+        } else {
+            setTheme(value, light);
+        }
+    }
+
+    function readJSON(event: ProgressEvent<FileReader>) {
+        if (event.target?.result != null) {
+            let json;
+            let err = false;
+            try {
+                json = JSON.parse(event.target.result as string);
+            } catch (e) {
+                err = true;
+            }
+            if (!err) {
+                let i= 0;
+                while (i < cssVarNames.length && !err) {
+                    if (cssVarNames[i] in json) {
+                        i++
+                    } else {
+                        err = true;
+                    }
+                }
+                if (!err) {
+                    let css: string;
+                    const suffix = customThemeLight ? "light" : "dark";
+                    css = css = `:root[data-theme="custom-${suffix}"] {`;
+                    for (i = 0; i < cssVarNames.length; i++) {
+                        css += "--color-" + cssVarNames[i] + ":" + json[cssVarNames[i]] + ";";
+                    }
+                    css += "}";
+                    appendCustomTheme(css, suffix);
+                    localStorage.setItem("customTheme-" + suffix, css);
+                } else {
+                    setDisplayError(true);
+                    setThemeError("Your custom theme didn't contain all required keys.")
+                }
+            } else {
+                setDisplayError(true);
+                setThemeError("There was a problem parsing this file.")
+            }
+        }
+    }
+
+    function onChange(event: Event & {
+        currentTarget: HTMLInputElement
+        target: HTMLInputElement
+    }, light: boolean) {
+        let file = event.target.files![0];
+        if (file.type == "application/json") {
+            customThemeLight = light;
+            const reader = new FileReader();
+            reader.onload = readJSON;
+            reader.readAsText(file);
+        } else {
+            setDisplayError(true);
+            setThemeError(`Unsupported type ${file.type}`);
+        }
     }
 
     return (
@@ -22,7 +101,6 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                         classList={{
                             "font-bold": selection() === 0,
                         }}
-
                     >
                         theming
                     </button>
@@ -45,7 +123,7 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                             <p class="text-base4 text-lg font-bold self-center">light theme</p>
                             <div class="pb-0.5 relative inline-block w-48">
                                 <select
-                                    class="appearance-none font-semibold w-full text-left pr-6 theme-fg bg-base0 theme-border focus:outline-none cursor-pointer bg-transparent"
+                                    class="font-semibold w-full text-left pr-6 pb-1 pl-2 border-b-2 theme-fg bg-base0 border-b-base2 focus:outline-none cursor-pointer"
                                     onChange={e => modifyTheme(e.target.value, true)}
                                     value={lightTheme()}
                                 >
@@ -53,8 +131,6 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                                         {theme => <option class="bg-base0 theme-fg" value={theme.name}>{theme.nameUser}</option>}
                                     </For>
                                 </select>
-                                <svg class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 theme-fg"
-                                    xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-344 240-584l56-56 184 184 184-184 56 56-240 240Z" /></svg>
                             </div>
                         </div>
 
@@ -62,7 +138,7 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                             <p class="text-base4 text-lg font-bold self-center">dark theme</p>
                             <div class="pb-0.5 relative inline-block w-48">
                                 <select
-                                    class="appearance-none font-semibold w-full text-left pr-6 theme-fg bg-base0 theme-border focus:outline-none cursor-pointer bg-transparent"
+                                    class="font-semibold w-full text-left pr-6 pb-1 pl-2 border-b-2 theme-fg bg-base0 border-b-base2 focus:outline-none cursor-pointer"
                                     onChange={e => modifyTheme(e.target.value, false)}
                                     value={darkTheme()}
                                 >
@@ -70,9 +146,17 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                                         {theme => <option class="bg-base0 theme-fg" value={theme.name}>{theme.nameUser}</option>}
                                     </For>
                                 </select>
-                                <svg class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 theme-fg"
-                                    xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-344 240-584l56-56 184 184 184-184 56 56-240 240Z" /></svg>
-                            </div>
+                                </div>
+                        </div>
+                        <div class="flex flex-row justify-between gap-1 mb-2 ml-[2%] mr-[2%]">
+                            <p class="text-base4 text-lg font-bold self-center">custom light theme</p>
+                            <input type="file" id="customTheme" class="theme-fg bg-base0" onChange={(e) => onChange(e, true)}/>
+                        </div>
+                        <div class={(displayError() ? "flex" : "hidden") + " flex-row p-4 mb-4 gap-2 border-dashed border-2 border-editor-reg"}>
+                            <span class="text-xl font-bold text-editor-reg">Error!</span>
+                            <p class="text-base4 font-medium self-center">{themeError()}</p>
+                            <p class="text-base4 font-medium self-center">For more information, see our guide</p>
+                            <a href="#" class="pl-1 underline font-bold text-base4">here</a>
                         </div>
                     </div>
                 </Show>
