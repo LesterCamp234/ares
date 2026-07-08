@@ -32,7 +32,7 @@ export const cssVarNames = [
 	'base2',
 	'base3',
 	'base4',
-	'base5',
+	'text',
 	'testsuite-red',
 	'testsuite-green',
 	'editor-selection-match',
@@ -89,22 +89,22 @@ createRoot(() => {
 	});
 });
 
-export function appendCustomTheme(content: string, light: string) {
-	let style = document.getElementById("customTheme-" + light);
+export function appendCustomTheme(content: string, suffix: string) {
+	let style = document.getElementById("customTheme-" + suffix);
 	if (style == null) {
 		style = document.createElement("style");
-		style.id = "customTheme-" + light;
+		style.id = "customTheme-" + suffix;
 		document.head.append(style);
 	}
 	style.textContent = content;
 }
 
 export function getCustomTheme() {
-	let custom = localStorage.getItem("customTheme-light");
+	let custom = localStorage.getItem("custom_theme_light");
 	if (custom !== null && custom !== "") {
 		appendCustomTheme(custom, "light");
 	}
-	custom = localStorage.getItem("customTheme-dark");
+	custom = localStorage.getItem("custom_theme_dark");
 	if (custom !== null && custom !== "") {
 		appendCustomTheme(custom, "dark");
 	}
