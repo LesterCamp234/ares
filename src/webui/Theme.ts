@@ -103,10 +103,14 @@ export function getCustomTheme() {
 	let custom = localStorage.getItem("custom_theme_light");
 	if (custom !== null && custom !== "") {
 		appendCustomTheme(custom, "light");
+	} else {
+		localStorage.setItem("theme_light", "github-light");
 	}
 	custom = localStorage.getItem("custom_theme_dark");
 	if (custom !== null && custom !== "") {
 		appendCustomTheme(custom, "dark");
+	} else {
+		localStorage.setItem("theme_dark", "github-dark");
 	}
 }
 

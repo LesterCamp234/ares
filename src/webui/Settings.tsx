@@ -1,15 +1,6 @@
-import { Component, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import {
-    appendCustomTheme,
-    cssVarNames,
-    darkTheme,
-    lightTheme,
-    setDarkTheme,
-    setLightTheme,
-    setTheme,
-    themeList
-} from "./Theme";
-import { Modal } from "./Modal";
+import {Component, createSignal, For, Show} from "solid-js";
+import {appendCustomTheme, cssVarNames, darkTheme, lightTheme, setTheme, themeList} from "./Theme";
+import {Modal} from "./Modal";
 
 export const Settings: Component<{ close: () => void }> = (props) => {
     const [selection, setSelection] = createSignal(0);
@@ -19,9 +10,10 @@ export const Settings: Component<{ close: () => void }> = (props) => {
 
     function modifyTheme(value: string, light: boolean) {
         const suffix = light ? "light" : "dark";
-        if (value === "custom-" + suffix && document.getElementById("customTheme-" + suffix) !== null) {
+        const style = document.getElementById("customTheme-" + suffix);
+        if (value === "custom-" + suffix && style != null) {
             setTheme(value, light)
-        } else {
+        } else if (value !== "custom-" + suffix) {
             setTheme(value, light);
         }
     }
@@ -34,38 +26,48 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                 json = JSON.parse(event.target.result as string);
             } catch (e) {
                 err = true;
+                setDisplayError(true);
+                setThemeError("There was a problem parsing this file.");
             }
             if (!err) {
-                let i= 0;
+                let i = 0;
                 while (i < cssVarNames.length && !err) {
                     if (cssVarNames[i] in json) {
                         i++
                     } else {
                         err = true;
+                        setDisplayError(true);
+                        setThemeError("Your custom theme didn't contain all required keys.");
                     }
                 }
                 if (!err) {
                     let css: string;
                     const suffix = customThemeLight ? "light" : "dark";
                     css = css = `:root[data-theme="custom-${suffix}"] {`;
-                    for (i = 0; i < cssVarNames.length; i++) {
-                        css += "--color-" + cssVarNames[i] + ":" + json[cssVarNames[i]] + ";";
+                    i = 0;
+                    while (i < cssVarNames.length && !err) {
+                        console.log(json[cssVarNames[i]]);
+                        if (json[cssVarNames[i]].trim().length > 0) {
+                            css += "--color-" + cssVarNames[i] + ":" + json[cssVarNames[i]] + ";";
+                        } else {
+                            setDisplayError(true);
+                            setThemeError("Your custom theme has some invalid colors.");
+                            err = true;
+                        }
+                        i++;
                     }
-                    css += "}";
-                    appendCustomTheme(css, suffix);
-                    localStorage.setItem("custom_theme_" + suffix, css);
-                } else {
-                    setDisplayError(true);
-                    setThemeError("Your custom theme didn't contain all required keys.")
+                    console.log(err);
+                    if (!err) {
+                        css += "}";
+                        appendCustomTheme(css, suffix);
+                        localStorage.setItem("custom_theme_" + suffix, css);
+                    }
                 }
-            } else {
-                setDisplayError(true);
-                setThemeError("There was a problem parsing this file.")
             }
         }
     }
 
-    function onChange(event: Event & {
+    function uploadTheme(event: Event & {
         currentTarget: HTMLInputElement
         target: HTMLInputElement
     }, light: boolean) {
@@ -150,16 +152,16 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                             <p class="theme-fg text-lg font-bold self-center">custom light theme</p>
                             <div class="flex items-center gap-3">
                                 <label
-                                    for="fileInput"
-                                    class="font-semibold w-full text-left pb-1 pr-2 pl-2 theme-fg bg-base0 border-2 theme-border hover:bg-border focus:outline-none cursor-pointer"
+                                    for="fileInputLight"
+                                    class="font-semibold w-full text-left pb-1 pr-2 pl-2 theme-fg bg-base0 hover:bg-border focus:outline-none cursor-pointer"
                                 >
                                     Upload
                                 </label>
                                 <input
-                                    id="fileInput"
+                                    id="fileInputLight"
                                     type="file"
                                     class="sr-only"
-                                    onChange={(e) => onChange(e, true)}
+                                    onChange={(e) => uploadTheme(e, true)}
                                 />
                             </div>
                         </div>
@@ -167,24 +169,26 @@ export const Settings: Component<{ close: () => void }> = (props) => {
                             <p class="theme-fg text-lg font-bold self-center">custom dark theme</p>
                             <div class="flex items-center gap-3">
                                 <label
-                                    for="fileInput"
-                                    class="font-semibold w-full text-left pb-1 pr-2 pl-2 theme-fg bg-base0 border-2 theme-border hover:bg-border focus:outline-none cursor-pointer"
+                                    for="fileInputDark"
+                                    class="font-semibold w-full text-left pb-1 pr-2 pl-2 theme-fg bg-base0 hover:bg-border focus:outline-none cursor-pointer"
                                 >
                                     Upload
                                 </label>
                                 <input
-                                    id="fileInput"
+                                    id="fileInputDark"
                                     type="file"
                                     class="sr-only"
-                                    onChange={(e) => onChange(e, false)}
+                                    onChange={(e) => uploadTheme(e, false)}
                                 />
                             </div>
                         </div>
-                        <div class={(displayError() ? "flex" : "hidden") + " flex-row p-4 mb-4 gap-1 border-dashed border-2 border-editor-reg"}>
-                            <span class="text-xl font-bold text-editor-reg">Error!</span>
+                        <div
+                            class={(displayError() ? "flex" : "hidden") + " flex-row flex-wrap p-4 mb-4 gap-1 border-dashed border-2 border-regtable-special"}>
+                            <span class="text-xl font-bold text-regtable-special">Error!</span>
                             <p class="theme-fg font-medium self-center pl-0.5">{themeError()}</p>
                             <p class="theme-fg font-medium self-center">For more information, see our guide</p>
-                            <a href="#" class="underline font-bold theme-fg self-center">here.</a>
+                            <a href="https://github.com/ldlaur/ares/blob/master/docs/theme/CustomTheme.md"
+                               class="underline font-bold theme-fg self-center">here.</a>
                         </div>
                     </div>
                 </Show>

@@ -235,7 +235,7 @@
   --temp-base: #eff1f5;
   --temp-mantle: #e6e9ef;
   --temp-crust: #dce0e8;
-  
+
   --color-button-hover: #eff1f580;
   --color-button-active: #eff1f5a0;
 
@@ -307,7 +307,7 @@
 
   --color-base0: var(--temp-base);
   --color-base1: var(--temp-surface0);
-  --color-base1a: var(--temp-surface0);
+  --color-base1a: var(--temp-surface1);
   --color-base2: var(--temp-surface1);
   --color-base3: var(--temp-overlay2);
   --color-base4: #fff;
@@ -347,7 +347,7 @@
   --color-base3: #b8b6ac;
   --color-base4: #43484c;
   --color-text: #5c6166;
-  --color-testsuite-red: #fdecea; 
+  --color-testsuite-red: #fdecea;
   --color-testsuite-green: #ebf5e8;
   --color-editor-selection-match: #ffe294;
   --color-editor-activeline: #e7e6dd50;
@@ -386,7 +386,7 @@
   --color-text: #BFBDB6;
 
   --color-button-hover: #1d253180;
-  --color-button-active: #1d2531c0; 
+  --color-button-active: #1d2531c0;
 
   --color-testsuite-red: #471c0f;
   --color-testsuite-green: #204729;
@@ -609,7 +609,7 @@
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  border-color: var(--color-base2);
+  border-color: var(--color-border);
   border-bottom-width: 2px;
   border-radius: 0;
   border-style: solid;
