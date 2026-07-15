@@ -75,7 +75,8 @@ function updateCssTheme() {
 }
 
 createRoot(() => {
-	getCustomTheme();
+  getCustomTheme("light");
+	getCustomTheme("dark");
 
 	const mql = window.matchMedia("(prefers-color-scheme: dark)");
 	mql.addEventListener("change", updateCssTheme);
@@ -99,18 +100,16 @@ export function appendCustomTheme(content: string, suffix: string) {
 	style.textContent = content;
 }
 
-export function getCustomTheme() {
-	let custom = localStorage.getItem("custom_theme_light");
+export function getCustomTheme(mode: "light" | "dark") {
+	let custom = localStorage.getItem("custom_theme_" + mode);
 	if (custom !== null && custom !== "") {
-		appendCustomTheme(custom, "light");
+		appendCustomTheme(custom, mode);
 	} else {
-		localStorage.setItem("theme_light", "github-light");
-	}
-	custom = localStorage.getItem("custom_theme_dark");
-	if (custom !== null && custom !== "") {
-		appendCustomTheme(custom, "dark");
-	} else {
-		localStorage.setItem("theme_dark", "github-dark");
+    const saved = localStorage.getItem("theme_" + mode);
+    if (saved === "custom-" + mode) {
+      localStorage.setItem("theme_" + mode, "github-" + mode);
+      setTheme("github-" + mode, mode === "light" ? true : false);
+    }
 	}
 }
 
