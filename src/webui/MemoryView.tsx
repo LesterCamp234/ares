@@ -8,7 +8,7 @@ import { ShadowStack } from "./ShadowStack";
 
 const MEMORY_WINDOW_SIZE = 65536;
 
-function loadWrapper(load: (addr: number, pow: number) => number, ptr: number, size: number) {
+function loadWrapper(load: (addr: number, size: number) => number, ptr: number, size: number) {
     let val = 0;
     for (let i = 0; i < size; i++) {
         val |= load(ptr + i, 1) << (i * 8);
@@ -42,10 +42,24 @@ const DisasmView: Component<{
     addrSelect: () => number,
     setAddrSelect: (i: number) => void,
     disassemble: (pc: number) => string | null,
+    load: (addr: number, size: number) => number,
     parentRef: HTMLDivElement | undefined,
 }> = (props) => {
+    // TODO: compute this C-side instead?
+    const addresses = createMemo(() => {
+        props.version(); // reactive hook for code change
+        const addrs: number[] = [];
+        let addr = TEXT_BASE;
+        const end = TEXT_BASE + MEMORY_WINDOW_SIZE;
+        while (addr < end) {
+            addrs.push(addr);
+            addr += (props.load(addr, 1) & 0x3) === 0x3 ? 4 : 2;
+        }
+        return addrs;
+    });
+
     const virtualizer = createVirtualizer({
-        get count() { return MEMORY_WINDOW_SIZE / 4; },
+        get count() { return addresses().length; },
         getScrollElement: () => props.parentRef ?? null,
         estimateSize: () => props.charHeight,
         overscan: 5,
@@ -53,8 +67,16 @@ const DisasmView: Component<{
 
     createEffect(() => {
         if (props.pc > 0) {
-            const idx = (props.pc - TEXT_BASE) / 4;
-            if (idx >= 0 && idx < MEMORY_WINDOW_SIZE / 4) {
+            // binary search to get the line from PC
+            const addrs = addresses();
+            let lo = 0, hi = addrs.length - 1, idx = -1;
+            while (lo <= hi) {
+                const mid = (lo + hi) >> 1;
+                if (addrs[mid] === props.pc) { idx = mid; break; }
+                else if (addrs[mid] < props.pc) lo = mid + 1;
+                else hi = mid - 1;
+            }
+            if (idx >= 0) {
                 virtualizer.scrollToIndex(idx, { align: "center" });
             }
         }
@@ -64,7 +86,7 @@ const DisasmView: Component<{
         <div style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
             <For each={virtualizer.getVirtualItems()}>
                 {(virtRow) => {
-                    const addr = TEXT_BASE + virtRow.index * 4;
+                    const addr = addresses()[virtRow.index];
                     return (
                         <div
                             style={{ "white-space": "nowrap", position: "absolute", top: `${virtRow.start}px`, height: `${virtRow.size}px` }}
@@ -101,7 +123,7 @@ const HexView: Component<{
     highlightLen: number,
     sp: number,
     fp: number,
-    load: (addr: number, pow: number) => number,
+    load: (addr: number, size: number) => number,
     charWidth: number,
     charHeight: number,
     addrSelect: () => number,
@@ -242,7 +264,7 @@ export const MemoryView: Component<{
     pc: number,
     sp: number,
     fp: number,
-    load: (addr: number, pow: number) => number,
+    load: (addr: number, size: number) => number,
     shadowStack: any,
     disassemble: (pc: number) => string | null
 }> = (props) => {
@@ -322,6 +344,7 @@ export const MemoryView: Component<{
                         setAddrSelect={setAddrSelect}
                         disassemble={props.disassemble}
                         parentRef={parentRef()}
+                        load={props.load}
                     />
                 </Show>
 
